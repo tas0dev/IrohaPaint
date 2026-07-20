@@ -1,4 +1,6 @@
-use crate::document::{Document, DocumentPoint, DocumentRect, ObjectId, ObjectKind};
+use crate::document::{
+    BezierPath, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind,
+};
 
 use super::interaction::ResizeHandle;
 
@@ -24,14 +26,138 @@ pub fn resize_handle_at(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeHit {
+    pub index: usize,
+    pub component: NodeComponent,
+}
+
+pub fn path_node_at(
+    path: &BezierPath,
+    selected_node: Option<usize>,
+    point: DocumentPoint,
+    tolerance: f32,
+) -> Option<NodeHit> {
+    if let Some(index) = selected_node
+        && let Some(node) = path.nodes().get(index)
+    {
+        for (component, handle) in [
+            (NodeComponent::HandleIn, node.handle_in),
+            (NodeComponent::HandleOut, node.handle_out),
+        ] {
+            if point_distance(node.position, handle) > f32::EPSILON
+                && point_distance(point, handle) <= tolerance
+            {
+                return Some(NodeHit { index, component });
+            }
+        }
+    }
+
+    path.nodes()
+        .iter()
+        .enumerate()
+        .find(|(_, node)| point_distance(point, node.position) <= tolerance)
+        .map(|(index, _)| NodeHit {
+            index,
+            component: NodeComponent::Anchor,
+        })
+}
+
+pub fn is_first_path_node(path: &BezierPath, point: DocumentPoint, tolerance: f32) -> bool {
+    path.nodes()
+        .first()
+        .is_some_and(|node| point_distance(point, node.position) <= tolerance)
+}
+
 fn kind_contains(kind: &ObjectKind, point: DocumentPoint, tolerance: f32) -> bool {
     match kind {
         ObjectKind::Rectangle { bounds } => expanded(*bounds, tolerance).contains(point),
         ObjectKind::Ellipse { bounds } => ellipse_contains(*bounds, point, tolerance),
-        ObjectKind::Path { points } => points
-            .windows(2)
-            .any(|segment| distance_to_segment(point, segment[0], segment[1]) <= tolerance),
+        ObjectKind::Path { path } => bezier_path_contains(path, point, tolerance),
     }
+}
+
+fn bezier_path_contains(path: &BezierPath, point: DocumentPoint, tolerance: f32) -> bool {
+    let nodes = path.nodes();
+    if nodes.len() < 2 {
+        return nodes
+            .first()
+            .is_some_and(|node| point_distance(point, node.position) <= tolerance);
+    }
+
+    let open_segments = nodes.windows(2).any(|nodes| {
+        cubic_contains(
+            point,
+            nodes[0].position,
+            nodes[0].handle_out,
+            nodes[1].handle_in,
+            nodes[1].position,
+            tolerance,
+        )
+    });
+    if open_segments || !path.is_closed() {
+        return open_segments;
+    }
+
+    let first = nodes.first().expect("a closed path has nodes");
+    let last = nodes.last().expect("a closed path has nodes");
+    cubic_contains(
+        point,
+        last.position,
+        last.handle_out,
+        first.handle_in,
+        first.position,
+        tolerance,
+    )
+}
+
+fn cubic_contains(
+    point: DocumentPoint,
+    start: DocumentPoint,
+    control_1: DocumentPoint,
+    control_2: DocumentPoint,
+    end: DocumentPoint,
+    tolerance: f32,
+) -> bool {
+    const STEPS: usize = 24;
+    let mut previous = start;
+    for step in 1..=STEPS {
+        let t = step as f32 / STEPS as f32;
+        let current = cubic_point(start, control_1, control_2, end, t);
+        if distance_to_segment(point, previous, current) <= tolerance {
+            return true;
+        }
+        previous = current;
+    }
+    false
+}
+
+fn cubic_point(
+    start: DocumentPoint,
+    control_1: DocumentPoint,
+    control_2: DocumentPoint,
+    end: DocumentPoint,
+    t: f32,
+) -> DocumentPoint {
+    let inverse = 1.0 - t;
+    let start_weight = inverse * inverse * inverse;
+    let first_weight = 3.0 * inverse * inverse * t;
+    let second_weight = 3.0 * inverse * t * t;
+    let end_weight = t * t * t;
+    DocumentPoint::new(
+        start.x * start_weight
+            + control_1.x * first_weight
+            + control_2.x * second_weight
+            + end.x * end_weight,
+        start.y * start_weight
+            + control_1.y * first_weight
+            + control_2.y * second_weight
+            + end.y * end_weight,
+    )
+}
+
+fn point_distance(first: DocumentPoint, second: DocumentPoint) -> f32 {
+    ((first.x - second.x).powi(2) + (first.y - second.y).powi(2)).sqrt()
 }
 
 fn expanded(bounds: DocumentRect, amount: f32) -> DocumentRect {

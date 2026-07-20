@@ -31,6 +31,7 @@ pub fn view(active_tool: State<EditorTool>) -> impl View + 'static {
 fn tool_icon(tool: EditorTool) -> &'static str {
     match tool {
         EditorTool::Select => "mouse-pointer-2",
+        EditorTool::NodeEdit => "spline",
         EditorTool::Pen => "pen-tool",
         EditorTool::Rectangle => "square",
         EditorTool::Ellipse => "circle",

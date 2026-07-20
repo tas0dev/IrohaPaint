@@ -47,11 +47,104 @@ impl DocumentRect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectId(u64);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BezierNode {
+    pub position: DocumentPoint,
+    pub handle_in: DocumentPoint,
+    pub handle_out: DocumentPoint,
+}
+
+impl BezierNode {
+    pub const fn corner(position: DocumentPoint) -> Self {
+        Self {
+            position,
+            handle_in: position,
+            handle_out: position,
+        }
+    }
+
+    pub fn smooth(position: DocumentPoint, handle_out: DocumentPoint) -> Self {
+        Self {
+            position,
+            handle_in: mirror_point(handle_out, position),
+            handle_out,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BezierPath {
+    nodes: Vec<BezierNode>,
+    closed: bool,
+}
+
+impl BezierPath {
+    pub fn new(first_node: BezierNode) -> Self {
+        Self {
+            nodes: vec![first_node],
+            closed: false,
+        }
+    }
+
+    pub fn nodes(&self) -> &[BezierNode] {
+        &self.nodes
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    pub(crate) fn push_node(&mut self, node: BezierNode) {
+        self.nodes.push(node);
+    }
+
+    pub(crate) fn close(&mut self) {
+        if self.nodes.len() > 1 {
+            self.closed = true;
+        }
+    }
+
+    pub(crate) fn edit_node(
+        &mut self,
+        node_index: usize,
+        component: NodeComponent,
+        point: DocumentPoint,
+    ) {
+        let Some(node) = self.nodes.get_mut(node_index) else {
+            return;
+        };
+        match component {
+            NodeComponent::Anchor => {
+                let delta =
+                    DocumentPoint::new(point.x - node.position.x, point.y - node.position.y);
+                node.position = point;
+                translate_point(&mut node.handle_in, delta);
+                translate_point(&mut node.handle_out, delta);
+            }
+            NodeComponent::HandleIn => {
+                node.handle_in = point;
+                node.handle_out = mirror_point(point, node.position);
+            }
+            NodeComponent::HandleOut => {
+                node.handle_out = point;
+                node.handle_in = mirror_point(point, node.position);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeComponent {
+    Anchor,
+    HandleIn,
+    HandleOut,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjectKind {
     Rectangle { bounds: DocumentRect },
     Ellipse { bounds: DocumentRect },
-    Path { points: Vec<DocumentPoint> },
+    Path { path: BezierPath },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,7 +165,7 @@ impl DocumentObject {
     pub fn bounds(&self) -> DocumentRect {
         match &self.kind {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => *bounds,
-            ObjectKind::Path { points } => path_bounds(points),
+            ObjectKind::Path { path } => path_bounds(path),
         }
     }
 
@@ -81,23 +174,12 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
                 *bounds = new_bounds;
             }
-            ObjectKind::Path { points } => {
-                let old_bounds = path_bounds(points);
-                for point in points {
-                    point.x = scale_axis(
-                        point.x,
-                        old_bounds.x,
-                        old_bounds.width,
-                        new_bounds.x,
-                        new_bounds.width,
-                    );
-                    point.y = scale_axis(
-                        point.y,
-                        old_bounds.y,
-                        old_bounds.height,
-                        new_bounds.y,
-                        new_bounds.height,
-                    );
+            ObjectKind::Path { path } => {
+                let old_bounds = path_bounds(path);
+                for node in &mut path.nodes {
+                    scale_point(&mut node.position, old_bounds, new_bounds);
+                    scale_point(&mut node.handle_in, old_bounds, new_bounds);
+                    scale_point(&mut node.handle_out, old_bounds, new_bounds);
                 }
             }
         }
@@ -108,10 +190,11 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
                 *bounds = bounds.translated(delta);
             }
-            ObjectKind::Path { points } => {
-                for point in points {
-                    point.x += delta.x;
-                    point.y += delta.y;
+            ObjectKind::Path { path } => {
+                for node in &mut path.nodes {
+                    translate_point(&mut node.position, delta);
+                    translate_point(&mut node.handle_in, delta);
+                    translate_point(&mut node.handle_out, delta);
                 }
             }
         }
@@ -209,8 +292,70 @@ impl Document {
         self.add_object(ObjectKind::Ellipse { bounds })
     }
 
-    pub fn add_path(&mut self, points: Vec<DocumentPoint>) -> ObjectId {
-        self.add_object(ObjectKind::Path { points })
+    pub fn add_path(&mut self, first_node: BezierNode) -> ObjectId {
+        self.add_object(ObjectKind::Path {
+            path: BezierPath::new(first_node),
+        })
+    }
+
+    pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { path } = &mut object.kind
+                && !path.closed
+            {
+                path.nodes.push(node);
+            }
+        });
+    }
+
+    pub fn close_path(&mut self, id: ObjectId) {
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { path } = &mut object.kind
+                && path.nodes.len() > 1
+            {
+                path.closed = true;
+            }
+        });
+    }
+
+    pub fn edit_path_node(
+        &mut self,
+        id: ObjectId,
+        node_index: usize,
+        component: NodeComponent,
+        point: DocumentPoint,
+    ) {
+        self.edit_object(id, |object| {
+            let ObjectKind::Path { path } = &mut object.kind else {
+                return;
+            };
+            path.edit_node(node_index, component, point);
+        });
+    }
+
+    pub fn remove_path_node(&mut self, id: ObjectId, node_index: usize) {
+        let Some((layer_index, object_index)) = self.find_object_index(id) else {
+            return;
+        };
+        let ObjectKind::Path { path } = &self.layers[layer_index].objects[object_index].kind else {
+            return;
+        };
+        if node_index >= path.nodes.len() {
+            return;
+        }
+
+        self.record_change();
+        let ObjectKind::Path { path } = &mut self.layers[layer_index].objects[object_index].kind
+        else {
+            unreachable!();
+        };
+        path.nodes.remove(node_index);
+        if path.nodes.is_empty() {
+            self.layers[layer_index].objects.remove(object_index);
+            self.selected_object = None;
+        } else if path.nodes.len() < 2 {
+            path.closed = false;
+        }
     }
 
     pub fn resize_object(&mut self, id: ObjectId, bounds: DocumentRect) {
@@ -322,18 +467,20 @@ impl Default for Document {
     }
 }
 
-fn path_bounds(points: &[DocumentPoint]) -> DocumentRect {
-    let Some(first) = points.first() else {
+fn path_bounds(path: &BezierPath) -> DocumentRect {
+    let Some(first) = path.nodes.first() else {
         return DocumentRect::default();
     };
 
-    let (mut min_x, mut max_x) = (first.x, first.x);
-    let (mut min_y, mut max_y) = (first.y, first.y);
-    for point in &points[1..] {
-        min_x = min_x.min(point.x);
-        max_x = max_x.max(point.x);
-        min_y = min_y.min(point.y);
-        max_y = max_y.max(point.y);
+    let (mut min_x, mut max_x) = (first.position.x, first.position.x);
+    let (mut min_y, mut max_y) = (first.position.y, first.position.y);
+    for node in &path.nodes {
+        for point in [node.position, node.handle_in, node.handle_out] {
+            min_x = min_x.min(point.x);
+            max_x = max_x.max(point.x);
+            min_y = min_y.min(point.y);
+            max_y = max_y.max(point.y);
+        }
     }
 
     DocumentRect {
@@ -342,6 +489,32 @@ fn path_bounds(points: &[DocumentPoint]) -> DocumentRect {
         width: max_x - min_x,
         height: max_y - min_y,
     }
+}
+
+fn translate_point(point: &mut DocumentPoint, delta: DocumentPoint) {
+    point.x += delta.x;
+    point.y += delta.y;
+}
+
+fn scale_point(point: &mut DocumentPoint, old_bounds: DocumentRect, new_bounds: DocumentRect) {
+    point.x = scale_axis(
+        point.x,
+        old_bounds.x,
+        old_bounds.width,
+        new_bounds.x,
+        new_bounds.width,
+    );
+    point.y = scale_axis(
+        point.y,
+        old_bounds.y,
+        old_bounds.height,
+        new_bounds.y,
+        new_bounds.height,
+    );
+}
+
+fn mirror_point(point: DocumentPoint, center: DocumentPoint) -> DocumentPoint {
+    DocumentPoint::new(center.x * 2.0 - point.x, center.y * 2.0 - point.y)
 }
 
 fn scale_axis(value: f32, old_start: f32, old_size: f32, new_start: f32, new_size: f32) -> f32 {

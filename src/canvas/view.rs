@@ -3,10 +3,10 @@ use viewkit::platform::PointerButton;
 use viewkit::prelude::{CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
-use crate::document::{Document, DocumentPoint, DocumentRect};
+use crate::document::{BezierNode, Document, DocumentPoint, DocumentRect, ObjectKind};
 use crate::editor::EditorTool;
 
-use super::hit_test::{object_at, resize_handle_at};
+use super::hit_test::{is_first_path_node, object_at, path_node_at, resize_handle_at};
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::paint_editor_canvas;
 use super::state::CanvasController;
@@ -75,6 +75,43 @@ impl EditorCanvas {
                     None => Interaction::Idle,
                 };
             }
+            EditorTool::NodeEdit => {
+                let current_document = self.document.get();
+                let selected_id = current_document.selected_object();
+                let selected_node =
+                    self.controller
+                        .get()
+                        .selected_node
+                        .and_then(|(object_id, index)| {
+                            (Some(object_id) == selected_id).then_some(index)
+                        });
+
+                if let Some(id) = selected_id
+                    && let Some(object) = current_document.object(id)
+                    && let ObjectKind::Path { path } = object.kind()
+                    && let Some(hit) = path_node_at(path, selected_node, document_point, tolerance)
+                {
+                    let original = object.kind().clone();
+                    drop(current_document);
+                    let mut state = self.controller.get_mut();
+                    state.selected_node = Some((id, hit.index));
+                    state.interaction = Interaction::EditingPathNode {
+                        id,
+                        original,
+                        node_index: hit.index,
+                        component: hit.component,
+                        current: document_point,
+                    };
+                    return;
+                }
+
+                let hit = object_at(&current_document, document_point, tolerance);
+                drop(current_document);
+                self.document.update(|document| document.select_object(hit));
+                let mut state = self.controller.get_mut();
+                state.selected_node = None;
+                state.interaction = Interaction::Idle;
+            }
             EditorTool::Rectangle => {
                 self.controller.get_mut().interaction = Interaction::DrawingShape {
                     kind: ShapeDraftKind::Rectangle,
@@ -90,8 +127,36 @@ impl EditorCanvas {
                 };
             }
             EditorTool::Pen => {
-                self.controller.get_mut().interaction = Interaction::DrawingPath {
-                    points: vec![document_point],
+                let active_path = self.controller.get().active_pen_path;
+                let current_document = self.document.get();
+                let active_object = active_path.and_then(|id| {
+                    current_document
+                        .object(id)
+                        .map(|object| (id, object.kind().clone()))
+                });
+
+                if let Some((id, ObjectKind::Path { path })) = &active_object
+                    && !path.is_closed()
+                    && path.nodes().len() > 1
+                    && is_first_path_node(path, document_point, tolerance)
+                {
+                    self.controller.get_mut().interaction = Interaction::ClosingPath { id: *id };
+                    return;
+                }
+
+                let (path_id, original) = match active_object {
+                    Some((id, original @ ObjectKind::Path { .. })) => (Some(id), Some(original)),
+                    _ => (None, None),
+                };
+                let mut state = self.controller.get_mut();
+                if path_id.is_none() {
+                    state.active_pen_path = None;
+                }
+                state.interaction = Interaction::PlacingPathNode {
+                    path_id,
+                    original,
+                    position: document_point,
+                    handle_out: document_point,
                 };
             }
         }
@@ -117,21 +182,16 @@ impl EditorCanvas {
         match &mut state.interaction {
             Interaction::DrawingShape { current, .. }
             | Interaction::Moving { current, .. }
-            | Interaction::Resizing { current, .. } => {
+            | Interaction::Resizing { current, .. }
+            | Interaction::EditingPathNode { current, .. } => {
                 *current = document_point;
                 true
             }
-            Interaction::DrawingPath { points } => {
-                let should_add = points.last().is_none_or(|last| {
-                    let delta_x = (document_point.x - last.x) * transform.zoom();
-                    let delta_y = (document_point.y - last.y) * transform.zoom();
-                    delta_x * delta_x + delta_y * delta_y >= 1.0
-                });
-                if should_add {
-                    points.push(document_point);
-                }
+            Interaction::PlacingPathNode { handle_out, .. } => {
+                *handle_out = document_point;
                 true
             }
+            Interaction::ClosingPath { .. } => true,
             Interaction::Panning { .. } => unreachable!(),
             Interaction::Idle => false,
         }
@@ -163,10 +223,56 @@ impl EditorCanvas {
                     }
                 });
             }
-            Interaction::DrawingPath { points } if points.len() > 1 => {
-                self.document.update(|document| {
-                    document.add_path(points);
-                });
+            Interaction::PlacingPathNode {
+                path_id,
+                position,
+                handle_out,
+                ..
+            } => {
+                let handle_delta_x = (handle_out.x - position.x) * zoom;
+                let handle_delta_y = (handle_out.y - position.y) * zoom;
+                let node = if handle_delta_x * handle_delta_x + handle_delta_y * handle_delta_y
+                    < MIN_DRAG_SIZE * MIN_DRAG_SIZE
+                {
+                    BezierNode::corner(position)
+                } else {
+                    BezierNode::smooth(position, handle_out)
+                };
+                let id = if let Some(id) = path_id {
+                    self.document
+                        .update(|document| document.append_path_node(id, node));
+                    id
+                } else {
+                    self.document.update(|document| document.add_path(node))
+                };
+                let node_index = self
+                    .document
+                    .get()
+                    .object(id)
+                    .and_then(|object| {
+                        let ObjectKind::Path { path } = object.kind() else {
+                            return None;
+                        };
+                        path.nodes().len().checked_sub(1)
+                    })
+                    .unwrap_or(0);
+                let mut state = self.controller.get_mut();
+                state.active_pen_path = Some(id);
+                state.selected_node = Some((id, node_index));
+            }
+            Interaction::ClosingPath { id } => {
+                self.document.update(|document| document.close_path(id));
+                self.controller.get_mut().active_pen_path = None;
+            }
+            Interaction::EditingPathNode {
+                id,
+                node_index,
+                component,
+                current,
+                ..
+            } => {
+                self.document
+                    .update(|document| document.edit_path_node(id, node_index, component, current));
             }
             Interaction::Moving {
                 id, start, current, ..
@@ -228,6 +334,8 @@ impl View for EditorCanvas {
             &document,
             state.transform,
             &state.interaction,
+            self.active_tool.get(),
+            state.selected_node,
             bounds,
             context,
         );
@@ -246,6 +354,16 @@ impl View for EditorCanvas {
                 self.handle_primary_press(*position, bounds);
                 context.request_redraw_in(bounds);
                 self.update_cursor(context);
+                EventResult::Consumed
+            }
+            ViewEvent::PointerPressed { position, button }
+                if bounds.contains(*position)
+                    && *button == PointerButton::Secondary
+                    && self.active_tool.get() == EditorTool::Pen
+                    && self.controller.get().active_pen_path.is_some() =>
+            {
+                self.controller.get_mut().active_pen_path = None;
+                context.request_redraw_in(bounds);
                 EventResult::Consumed
             }
             ViewEvent::PointerPressed { position, button }
@@ -287,8 +405,17 @@ impl View for EditorCanvas {
                 EventResult::Consumed
             }
             ViewEvent::Delete | ViewEvent::Backspace => {
-                self.document
-                    .update(|document| document.delete_selected_object());
+                let selected_node = self.controller.get().selected_node;
+                if self.active_tool.get() == EditorTool::NodeEdit
+                    && let Some((id, node_index)) = selected_node
+                {
+                    self.document
+                        .update(|document| document.remove_path_node(id, node_index));
+                    self.controller.get_mut().selected_node = None;
+                } else {
+                    self.document
+                        .update(|document| document.delete_selected_object());
+                }
                 context.request_redraw_in(bounds);
                 EventResult::Consumed
             }
