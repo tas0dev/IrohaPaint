@@ -77,6 +77,14 @@ impl PaintLayer {
         self.tiles.is_empty()
     }
 
+    pub(super) fn insert_tile(&mut self, x: i32, y: i32, pixels: Vec<u8>) -> bool {
+        if pixels.len() != PAINT_TILE_SIZE as usize * PAINT_TILE_SIZE as usize * 4 {
+            return false;
+        }
+        self.tiles.insert((x, y), PaintTile { x, y, pixels });
+        true
+    }
+
     pub fn bounds(&self) -> Option<DocumentRect> {
         self.tiles
             .values()

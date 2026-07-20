@@ -52,6 +52,11 @@ pub trait PlatformWindow {
 pub trait PlatformApplication {
     fn handle_event(&mut self, event: PlatformEvent, window: &dyn PlatformWindow);
 
+    fn close_requested(&mut self, window: &dyn PlatformWindow) -> bool {
+        self.handle_event(PlatformEvent::CloseRequested, window);
+        true
+    }
+
     fn draw(&mut self, viewport: Viewport, display_list: &mut DisplayList) -> Rect {
         let _ = display_list;
 

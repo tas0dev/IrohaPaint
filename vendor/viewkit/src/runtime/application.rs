@@ -78,6 +78,15 @@ impl<A> PlatformApplication for ApplicationRuntime<A>
 where
     A: App,
 {
+    fn close_requested(&mut self, window: &dyn PlatformWindow) -> bool {
+        let should_close = self.app.should_close();
+        if !should_close && take_state_changed() {
+            self.rebuild_root(window.viewport());
+            window.request_redraw();
+        }
+        should_close
+    }
+
     fn handle_event(&mut self, event: PlatformEvent, window: &dyn PlatformWindow) {
         match &event {
             PlatformEvent::Resumed { viewport }

@@ -76,4 +76,8 @@ impl CanvasController {
     pub fn has_reference_image(&self) -> bool {
         self.state.borrow().reference_image.is_some()
     }
+
+    pub fn reset_for_document(&self) {
+        *self.state.borrow_mut() = CanvasState::default();
+    }
 }

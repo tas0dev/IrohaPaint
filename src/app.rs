@@ -4,13 +4,16 @@ use crate::brush::BrushLibrary;
 use crate::canvas::{CanvasBindings, CanvasController, EditorCanvas};
 use crate::document::{Document, ObjectId};
 use crate::editor::EditorTool;
+use crate::project;
 use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
+use std::path::PathBuf;
 
 pub struct IrohaPaint {
     active_tool: State<EditorTool>,
     document: State<Document>,
     canvas: CanvasController,
     export_status: State<String>,
+    project_path: State<Option<PathBuf>>,
     file_menu: PopupMenuState,
     pen_menu: PopupMenuState,
     document_settings: ModalState,
@@ -45,6 +48,7 @@ impl App for IrohaPaint {
             document: State::new(Document::new()),
             canvas: CanvasController::new(),
             export_status: State::new(String::new()),
+            project_path: State::new(None),
             file_menu: PopupMenuState::new(),
             pen_menu: PopupMenuState::new(),
             document_settings: ModalState::new(),
@@ -77,6 +81,16 @@ impl App for IrohaPaint {
             .resizable(true)
     }
 
+    fn should_close(&self) -> bool {
+        match project::prepare_to_replace(&self.document, &self.project_path) {
+            Ok(should_close) => should_close,
+            Err(error) => {
+                self.export_status.set(format!("Save failed: {error}"));
+                false
+            }
+        }
+    }
+
     fn body(&self, _context: &ViewContext) -> Box<dyn View + 'static> {
         let content = VStack::new()
             .alignment(StackAlignment::Stretch)
@@ -84,6 +98,7 @@ impl App for IrohaPaint {
             .child(menu_bar::view(
                 self.document.clone(),
                 self.export_status.clone(),
+                self.project_path.clone(),
                 self.file_menu.clone(),
             ))
             .child(Divider::new())
@@ -143,7 +158,13 @@ impl App for IrohaPaint {
             self.document.clone(),
             self.canvas.clone(),
             self.export_status.clone(),
+            self.project_path.clone(),
             self.document_settings.clone(),
+            menu_bar::DocumentFieldStates {
+                width: self.canvas_width.clone(),
+                height: self.canvas_height.clone(),
+                background: self.background_hex.clone(),
+            },
         );
         let pen_menu = tool_bar::pen_menu(
             self.brushes.clone(),

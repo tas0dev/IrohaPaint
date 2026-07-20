@@ -237,4 +237,10 @@ pub trait App: Sized + 'static {
 
     /// 現在のアプリケーション状態からルートViewを構築します。
     fn body(&self, context: &ViewContext) -> Self::Body;
+
+    /// Called when the user asks to close the main window.
+    /// Return `false` to keep the application open.
+    fn should_close(&self) -> bool {
+        true
+    }
 }

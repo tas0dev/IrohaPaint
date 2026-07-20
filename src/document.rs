@@ -1,6 +1,7 @@
 mod paint_layer;
 mod path_edit;
 mod path_erase;
+mod project;
 mod stroke_outline;
 
 const FILL_BLEED_WIDTH: f32 = 2.0;
@@ -8,6 +9,7 @@ const FILL_BLEED_WIDTH: f32 = 2.0;
 pub(crate) use paint_layer::{PAINT_TILE_SIZE, PaintDab, PaintLayer};
 use path_edit::simplification_candidates;
 use path_erase::{erase_path, eraser_cutout};
+pub use project::ProjectDecodeError;
 pub(crate) use stroke_outline::variable_stroke_outlines;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -517,6 +519,7 @@ pub struct Document {
     undo_stack: Vec<DocumentSnapshot>,
     redo_stack: Vec<DocumentSnapshot>,
     properties: DocumentProperties,
+    modified: bool,
 }
 
 impl Document {
@@ -531,7 +534,16 @@ impl Document {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             properties: DocumentProperties::default(),
+            modified: false,
         }
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.modified = false;
     }
 
     pub fn layers(&self) -> &[Layer] {
@@ -1197,6 +1209,7 @@ impl Document {
             let current = self.snapshot();
             self.redo_stack.push(current);
             self.restore(snapshot);
+            self.modified = true;
         }
     }
 
@@ -1205,6 +1218,7 @@ impl Document {
             let current = self.snapshot();
             self.undo_stack.push(current);
             self.restore(snapshot);
+            self.modified = true;
         }
     }
 
@@ -1369,6 +1383,7 @@ impl Document {
     }
 
     fn record_change(&mut self) {
+        self.modified = true;
         self.undo_stack.push(self.snapshot());
         self.redo_stack.clear();
     }

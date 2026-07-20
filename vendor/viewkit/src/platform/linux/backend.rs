@@ -280,9 +280,15 @@ where
 
         match event {
             WindowEvent::CloseRequested => {
-                self.emit(PlatformEvent::CloseRequested);
-
-                event_loop.exit();
+                let should_close = self.window.as_ref().is_some_and(|window| {
+                    let platform_window = WinitWindow {
+                        inner: window.as_ref(),
+                    };
+                    self.application.close_requested(&platform_window)
+                });
+                if should_close {
+                    event_loop.exit();
+                }
             }
 
             WindowEvent::Resized(size) => {

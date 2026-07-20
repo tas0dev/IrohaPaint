@@ -5,6 +5,7 @@ pub mod document;
 mod editor;
 mod export;
 mod icons;
+mod project;
 mod reference;
 mod views;
 
