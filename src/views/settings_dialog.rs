@@ -1,6 +1,6 @@
 use viewkit::prelude::*;
 
-use crate::brush::{BrushDefinition, BrushLibrary, BrushTip};
+use crate::brush::{BrushDefinition, BrushKind, BrushLibrary, BrushTip};
 use crate::document::{CanvasSize, Document, DocumentColor};
 use crate::editor::EditorTool;
 
@@ -118,7 +118,12 @@ pub fn brush_settings(
     blob_width: State<f32>,
     modal: ModalState,
 ) -> impl View + 'static {
-    let active = brushes.get().active().clone();
+    let kind = if active_tool.get() == EditorTool::BlobBrush {
+        BrushKind::Paint
+    } else {
+        BrushKind::Line
+    };
+    let active = brushes.get().active(kind).clone();
     let tip_description = match active.tip {
         BrushTip::Round => String::from("Round"),
         BrushTip::Ellipse { roundness, angle } => {
@@ -139,26 +144,26 @@ pub fn brush_settings(
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(brush_button("Round", brushes.clone(), |brush| {
+                        .child(brush_button("Round", brushes.clone(), kind, |brush| {
                             brush.tip = BrushTip::Round;
                         }))
-                        .child(brush_button("Ellipse", brushes.clone(), |brush| {
+                        .child(brush_button("Ellipse", brushes.clone(), kind, |brush| {
                             brush.tip = BrushTip::Ellipse {
                                 roundness: 0.75,
                                 angle: -45.0,
                             };
                         }))
-                        .child(brush_button("Flatter", brushes.clone(), |brush| {
+                        .child(brush_button("Flatter", brushes.clone(), kind, |brush| {
                             if let BrushTip::Ellipse { roundness, .. } = &mut brush.tip {
                                 *roundness -= 0.1;
                             }
                         }))
-                        .child(brush_button("Rounder", brushes.clone(), |brush| {
+                        .child(brush_button("Rounder", brushes.clone(), kind, |brush| {
                             if let BrushTip::Ellipse { roundness, .. } = &mut brush.tip {
                                 *roundness += 0.1;
                             }
                         }))
-                        .child(brush_button("Rotate", brushes.clone(), |brush| {
+                        .child(brush_button("Rotate", brushes.clone(), kind, |brush| {
                             if let BrushTip::Ellipse { angle, .. } = &mut brush.tip {
                                 *angle += 15.0;
                             }
@@ -172,11 +177,11 @@ pub fn brush_settings(
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(brush_button("Less Taper", brushes.clone(), |brush| {
+                        .child(brush_button("Less Taper", brushes.clone(), kind, |brush| {
                             brush.taper_start -= 0.1;
                             brush.taper_end -= 0.1;
                         }))
-                        .child(brush_button("More Taper", brushes.clone(), |brush| {
+                        .child(brush_button("More Taper", brushes.clone(), kind, |brush| {
                             brush.taper_start += 0.1;
                             brush.taper_end += 0.1;
                         })),
@@ -197,10 +202,11 @@ pub fn brush_settings(
                             move || {
                                 let result = brushes.update(|library| {
                                     if active_tool.get() == EditorTool::BlobBrush {
-                                        library
-                                            .update_active(|brush| brush.width = blob_width.get());
+                                        library.update_active(kind, |brush| {
+                                            brush.paint_width = blob_width.get()
+                                        });
                                     }
-                                    library.save_active_as_file(&preset_name.get())
+                                    library.save_active_as_file(kind, &preset_name.get())
                                 });
                                 match result {
                                     Ok(path) => status.set(format!("Saved {}", path.display())),
@@ -216,7 +222,9 @@ pub fn brush_settings(
                             move || match brushes.update(BrushLibrary::reload_from_disk) {
                                 Ok(()) => {
                                     if active_tool.get() == EditorTool::BlobBrush {
-                                        blob_width.set(brushes.get().active().width);
+                                        blob_width.set(
+                                            brushes.get().active(BrushKind::Paint).paint_width,
+                                        );
                                     }
                                     status.set(String::from("Brushes reloaded"));
                                 }
@@ -240,9 +248,10 @@ fn parse_size(width: &str, height: &str) -> Option<(f32, f32)> {
 fn brush_button(
     title: &'static str,
     brushes: State<BrushLibrary>,
+    kind: BrushKind,
     update: impl Fn(&mut BrushDefinition) + 'static,
 ) -> Button {
     Button::new(title).on_click(move || {
-        brushes.update(|library| library.update_active(|brush| update(brush)));
+        brushes.update(|library| library.update_active(kind, |brush| update(brush)));
     })
 }

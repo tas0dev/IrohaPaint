@@ -1,6 +1,6 @@
 use viewkit::prelude::*;
 
-use crate::brush::BrushLibrary;
+use crate::brush::{BrushKind, BrushLibrary};
 use crate::editor::EditorTool;
 
 use super::icon_button;
@@ -42,12 +42,24 @@ pub fn pen_menu(
     brush_settings: ModalState,
     stroke_color: State<Color>,
     brush_width: State<f32>,
+    blob_width: State<f32>,
     smoothing: State<f32>,
+    active_tool: State<EditorTool>,
 ) -> Menu {
     let library = brushes.get();
-    let active = library.active_index();
+    let kind = if active_tool.get() == EditorTool::BlobBrush {
+        BrushKind::Paint
+    } else {
+        BrushKind::Line
+    };
+    let active = library.active_index(kind);
     let mut menu = Menu::new();
-    for (index, brush) in library.presets().iter().enumerate() {
+    for (index, brush) in library
+        .presets()
+        .iter()
+        .enumerate()
+        .filter(|(_, brush)| brush.kind == kind)
+    {
         let label = if index == active {
             format!("✓ {}", brush.name)
         } else {
@@ -57,17 +69,23 @@ pub fn pen_menu(
             let brushes = brushes.clone();
             let stroke_color = stroke_color.clone();
             let brush_width = brush_width.clone();
+            let blob_width = blob_width.clone();
             let smoothing = smoothing.clone();
+            let active_tool = active_tool.clone();
             move || {
-                brushes.update(|library| library.select(index));
-                let brush = brushes.get().active().clone();
+                brushes.update(|library| library.select(kind, index));
+                let brush = brushes.get().active(kind).clone();
                 stroke_color.set(Color::rgba(
                     brush.color.red,
                     brush.color.green,
                     brush.color.blue,
                     brush.color.alpha,
                 ));
-                brush_width.set(brush.width);
+                if active_tool.get() == EditorTool::BlobBrush {
+                    blob_width.set(brush.paint_width);
+                } else {
+                    brush_width.set(brush.width);
+                }
                 smoothing.set(brush.smoothing);
             }
         }));

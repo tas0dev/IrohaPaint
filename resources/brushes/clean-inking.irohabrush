@@ -1,9 +1,11 @@
 version=2
 name=Clean Inking
+kind=line
 tip=ellipse
 tip_roundness=0.82
 tip_angle=-45
 width=2.5
+paint_width=18
 minimum_width=0.2
 smoothing=0.72
 streamline=0.5

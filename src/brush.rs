@@ -42,11 +42,20 @@ pub enum BrushTip {
     Ellipse { roundness: f32, angle: f32 },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BrushKind {
+    #[default]
+    Line,
+    Paint,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrushDefinition {
     pub name: String,
+    pub kind: BrushKind,
     pub tip: BrushTip,
     pub width: f32,
+    pub paint_width: f32,
     pub minimum_width: f32,
     pub smoothing: f32,
     pub streamline: f32,
@@ -88,7 +97,8 @@ impl BrushDefinition {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrushLibrary {
     presets: Vec<BrushDefinition>,
-    active: usize,
+    active_line: usize,
+    active_paint: usize,
 }
 
 impl BrushLibrary {
@@ -96,26 +106,41 @@ impl BrushLibrary {
         &self.presets
     }
 
-    pub fn active_index(&self) -> usize {
-        self.active
-    }
-
-    pub fn active(&self) -> &BrushDefinition {
-        &self.presets[self.active]
-    }
-
-    pub fn select(&mut self, index: usize) {
-        if index < self.presets.len() {
-            self.active = index;
+    pub fn active_index(&self, kind: BrushKind) -> usize {
+        match kind {
+            BrushKind::Line => self.active_line,
+            BrushKind::Paint => self.active_paint,
         }
     }
 
-    pub fn update_active(&mut self, update: impl FnOnce(&mut BrushDefinition)) {
-        update(&mut self.presets[self.active]);
-        sanitize(&mut self.presets[self.active]);
+    pub fn active(&self, kind: BrushKind) -> &BrushDefinition {
+        &self.presets[self.active_index(kind)]
     }
 
-    pub fn save_active_as_file(&mut self, name: &str) -> Result<PathBuf, BrushFileError> {
+    pub fn select(&mut self, kind: BrushKind, index: usize) {
+        if self
+            .presets
+            .get(index)
+            .is_some_and(|brush| brush.kind == kind)
+        {
+            match kind {
+                BrushKind::Line => self.active_line = index,
+                BrushKind::Paint => self.active_paint = index,
+            }
+        }
+    }
+
+    pub fn update_active(&mut self, kind: BrushKind, update: impl FnOnce(&mut BrushDefinition)) {
+        let index = self.active_index(kind);
+        update(&mut self.presets[index]);
+        sanitize(&mut self.presets[index]);
+    }
+
+    pub fn save_active_as_file(
+        &mut self,
+        kind: BrushKind,
+        name: &str,
+    ) -> Result<PathBuf, BrushFileError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(BrushFileError::Invalid {
@@ -123,7 +148,7 @@ impl BrushLibrary {
                 message: String::from("Brush name is empty"),
             });
         }
-        let mut brush = self.active().clone();
+        let mut brush = self.active(kind).clone();
         brush.name = name.to_owned();
         sanitize(&mut brush);
 
@@ -132,14 +157,15 @@ impl BrushLibrary {
         let path = unique_brush_path(&directory, name);
         fs::write(&path, serialize_brush(&brush))?;
         self.presets.push(brush);
-        self.active = self.presets.len() - 1;
+        self.select(kind, self.presets.len() - 1);
         Ok(path)
     }
 
     pub fn reload_from_disk(&mut self) -> Result<(), BrushFileError> {
         let loaded = load_brushes(&brush_directory())?;
         self.presets = loaded;
-        self.active = 0;
+        self.active_line = preferred_brush_index(&self.presets, BrushKind::Line, "Clean Inking");
+        self.active_paint = preferred_brush_index(&self.presets, BrushKind::Paint, "Flat Color");
         Ok(())
     }
 }
@@ -147,7 +173,13 @@ impl BrushLibrary {
 impl Default for BrushLibrary {
     fn default() -> Self {
         if let Ok(presets) = load_brushes(&brush_directory()) {
-            return Self { presets, active: 0 };
+            let active_line = preferred_brush_index(&presets, BrushKind::Line, "Clean Inking");
+            let active_paint = preferred_brush_index(&presets, BrushKind::Paint, "Flat Color");
+            return Self {
+                presets,
+                active_line,
+                active_paint,
+            };
         }
         Self {
             presets: vec![
@@ -156,14 +188,24 @@ impl Default for BrushLibrary {
                         roundness: 0.82,
                         angle: -45.0,
                     },
-                    ..preset("Clean Inking", 2.5, 0.72, 0.35)
+                    ..preset(BrushKind::Line, "Clean Inking", 2.5, 18.0, 0.72, 0.35)
                 },
-                preset("Smooth Pencil", 1.8, 0.9, 0.15),
-                preset("Monoline", 3.0, 0.45, 0.0),
+                preset(BrushKind::Line, "Smooth Pencil", 1.8, 30.0, 0.9, 0.15),
+                preset(BrushKind::Line, "Monoline", 3.0, 48.0, 0.45, 0.0),
+                preset(BrushKind::Paint, "Flat Color", 3.0, 48.0, 0.65, 0.0),
             ],
-            active: 0,
+            active_line: 0,
+            active_paint: 3,
         }
     }
+}
+
+fn preferred_brush_index(brushes: &[BrushDefinition], kind: BrushKind, name: &str) -> usize {
+    brushes
+        .iter()
+        .position(|brush| brush.kind == kind && brush.name == name)
+        .or_else(|| brushes.iter().position(|brush| brush.kind == kind))
+        .unwrap_or(0)
 }
 
 fn brush_directory() -> PathBuf {
@@ -217,6 +259,15 @@ fn parse_brush(path: &Path, source: &str) -> Result<BrushDefinition, BrushFileEr
                 message: format!("Invalid {key}"),
             })
     };
+    let optional_number = |key: &str, fallback: f32| -> Result<f32, BrushFileError> {
+        let Some(raw) = value(key) else {
+            return Ok(fallback);
+        };
+        raw.parse::<f32>().map_err(|_| BrushFileError::Invalid {
+            path: path.to_owned(),
+            message: format!("Invalid {key}"),
+        })
+    };
     if required("version")? != "2" {
         return Err(BrushFileError::Invalid {
             path: path.to_owned(),
@@ -245,8 +296,14 @@ fn parse_brush(path: &Path, source: &str) -> Result<BrushDefinition, BrushFileEr
     };
     let mut brush = BrushDefinition {
         name: required("name")?.to_owned(),
+        kind: match value("kind").unwrap_or("line") {
+            "line" => BrushKind::Line,
+            "paint" => BrushKind::Paint,
+            _ => return invalid_value(path, "kind"),
+        },
         tip,
         width: number("width")?,
+        paint_width: optional_number("paint_width", 40.0)?,
         minimum_width: number("minimum_width")?,
         smoothing: number("smoothing")?,
         streamline: number("streamline")?,
@@ -278,12 +335,17 @@ fn serialize_brush(brush: &BrushDefinition) -> String {
         BrushTip::Ellipse { roundness, angle } => ("ellipse", roundness, angle),
     };
     format!(
-        "version=2\nname={}\ntip={}\ntip_roundness={}\ntip_angle={}\nwidth={}\nminimum_width={}\nsmoothing={}\nstreamline={}\ntaper_start={}\ntaper_end={}\ncolor={}\ncap={}\njoin={}\n",
+        "version=2\nname={}\nkind={}\ntip={}\ntip_roundness={}\ntip_angle={}\nwidth={}\npaint_width={}\nminimum_width={}\nsmoothing={}\nstreamline={}\ntaper_start={}\ntaper_end={}\ncolor={}\ncap={}\njoin={}\n",
         brush.name.replace(['\r', '\n'], " "),
+        match brush.kind {
+            BrushKind::Line => "line",
+            BrushKind::Paint => "paint",
+        },
         tip,
         roundness,
         angle,
         brush.width,
+        brush.paint_width,
         brush.minimum_width,
         brush.smoothing,
         brush.streamline,
@@ -341,11 +403,20 @@ fn join_name(join: StrokeJoin) -> &'static str {
     }
 }
 
-fn preset(name: &str, width: f32, smoothing: f32, taper: f32) -> BrushDefinition {
+fn preset(
+    kind: BrushKind,
+    name: &str,
+    width: f32,
+    paint_width: f32,
+    smoothing: f32,
+    taper: f32,
+) -> BrushDefinition {
     BrushDefinition {
         name: name.to_owned(),
+        kind,
         tip: BrushTip::Round,
         width,
+        paint_width,
         minimum_width: 0.2,
         smoothing,
         streamline: 0.5,
@@ -359,6 +430,7 @@ fn preset(name: &str, width: f32, smoothing: f32, taper: f32) -> BrushDefinition
 
 fn sanitize(brush: &mut BrushDefinition) {
     brush.width = brush.width.clamp(0.1, 256.0);
+    brush.paint_width = brush.paint_width.clamp(1.0, 400.0);
     brush.minimum_width = brush.minimum_width.clamp(0.0, 1.0);
     brush.smoothing = brush.smoothing.clamp(0.0, 1.0);
     brush.streamline = brush.streamline.clamp(0.0, 1.0);

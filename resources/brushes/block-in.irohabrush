@@ -1,0 +1,16 @@
+version=2
+name=Block In
+kind=paint
+tip=round
+tip_roundness=1
+tip_angle=0
+width=5
+paint_width=96
+minimum_width=1
+smoothing=0.4
+streamline=0.25
+taper_start=0
+taper_end=0
+color=#000000FF
+cap=square
+join=bevel

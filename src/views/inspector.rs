@@ -1,6 +1,6 @@
 use viewkit::prelude::*;
 
-use crate::brush::BrushLibrary;
+use crate::brush::{BrushKind, BrushLibrary};
 use crate::canvas::CanvasController;
 use crate::document::{Document, DocumentColor, NodeKind, ObjectId};
 use crate::editor::EditorTool;
@@ -34,6 +34,14 @@ pub fn view(
     let painting_raster = tool == EditorTool::Paint;
     let filling = tool == EditorTool::Fill;
     let erasing = tool == EditorTool::Eraser;
+    let brush_kind = if matches!(
+        tool,
+        EditorTool::BlobBrush | EditorTool::Fill | EditorTool::Paint
+    ) {
+        BrushKind::Paint
+    } else {
+        BrushKind::Line
+    };
     let selected_object = if edits_selection(tool) {
         current_document.selected_object()
     } else {
@@ -49,9 +57,22 @@ pub fn view(
             bindings.fill_color.set(view_color(style.fill));
             bindings.brush_width.set(style.stroke.width);
         } else {
-            let brush = brushes.get().active().clone();
+            let brush = brushes.get().active(brush_kind).clone();
             bindings.stroke_color.set(view_color(brush.color));
             bindings.brush_width.set(brush.width);
+            bindings.smoothing.set(brush.smoothing);
+        }
+    }
+    if selected_object.is_none() {
+        let brush = brushes.get().active(brush_kind).clone();
+        let color = view_color(brush.color);
+        if bindings.stroke_color.get() != color {
+            bindings.stroke_color.set(color);
+        }
+        if brush_kind == BrushKind::Line && bindings.brush_width.get() != brush.width {
+            bindings.brush_width.set(brush.width);
+        }
+        if bindings.smoothing.get() != brush.smoothing {
             bindings.smoothing.set(brush.smoothing);
         }
     }
@@ -273,7 +294,9 @@ pub fn view(
                 let active_tool = active_tool.clone();
                 move |color| {
                     let color = document_color(color);
-                    brushes.update(|library| library.update_active(|brush| brush.color = color));
+                    brushes.update(|library| {
+                        library.update_active(brush_kind, |brush| brush.color = color)
+                    });
                     if edits_selection(active_tool.get()) {
                         document.update(|document| document.set_selected_stroke_color(color));
                     }
@@ -298,6 +321,16 @@ pub fn view(
                     Slider::new(bindings.blob_width.binding())
                         .range(1.0..=200.0)
                         .step(1.0)
+                        .on_commit({
+                            let brushes = brushes.clone();
+                            move |width| {
+                                brushes.update(|library| {
+                                    library.update_active(BrushKind::Paint, |brush| {
+                                        brush.paint_width = width
+                                    })
+                                });
+                            }
+                        })
                 } else if painting_raster {
                     Slider::new(bindings.paint_size.binding())
                         .range(1.0..=256.0)
@@ -312,7 +345,8 @@ pub fn view(
                             let active_tool = active_tool.clone();
                             move |width| {
                                 brushes.update(|library| {
-                                    library.update_active(|brush| brush.width = width)
+                                    library
+                                        .update_active(BrushKind::Line, |brush| brush.width = width)
                                 });
                                 if edits_selection(active_tool.get()) {
                                     document.update(|document| {
@@ -361,7 +395,8 @@ pub fn view(
                         let brushes = brushes.clone();
                         move |smoothing| {
                             brushes.update(|library| {
-                                library.update_active(|brush| brush.smoothing = smoothing)
+                                library
+                                    .update_active(brush_kind, |brush| brush.smoothing = smoothing)
                             });
                         }
                     }),

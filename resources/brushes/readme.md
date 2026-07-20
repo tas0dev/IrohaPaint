@@ -6,10 +6,12 @@ Use **Reload Brushes** in Brush Settings after adding or editing a file while th
 ```ini
 version=2
 name=My Brush
+kind=line
 tip=ellipse
 tip_roundness=0.75
 tip_angle=-45
 width=12
+paint_width=48
 minimum_width=0.2
 smoothing=0.7
 streamline=0.5
@@ -22,9 +24,11 @@ join=round
 
 Values:
 
+- `kind`: `line` or `paint`; omitted values default to `line`
 - `tip`: `round` or `ellipse`
 - `tip_roundness`: `0.05` to `1`
 - `width`: `0.1` to `256`
+- `paint_width`: `1` to `400`; used by the vector paint brush and defaults to `40`
 - `minimum_width`, `smoothing`, `streamline`, `taper_start`, `taper_end`: `0` to `1`
 - `color`: `#RRGGBB` or `#RRGGBBAA`
 - `cap`: `butt`, `round`, or `square`

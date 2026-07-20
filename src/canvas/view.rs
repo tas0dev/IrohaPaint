@@ -3,7 +3,7 @@ use viewkit::platform::{ButtonState, KeyCode, KeyModifiers, PointerButton};
 use viewkit::prelude::{Color, CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
-use crate::brush::BrushLibrary;
+use crate::brush::{BrushKind, BrushLibrary};
 use crate::document::{
     BezierNode, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, NodeComponent,
     ObjectKind, ObjectStyle, PaintDab,
@@ -235,7 +235,7 @@ impl EditorCanvas {
                 if !inside_drawing_bounds {
                     return;
                 }
-                let brush = self.brushes.get().active().clone();
+                let brush = self.brushes.get().active(BrushKind::Line).clone();
                 self.controller.get_mut().interaction = Interaction::DrawingPencil {
                     raw_points: vec![document_point],
                     preview: fit_pencil_stroke(
@@ -253,7 +253,7 @@ impl EditorCanvas {
                 let dab = PaintDab {
                     center: document_point,
                     radius: size / 2.0,
-                    color: self.brushes.get().active().color,
+                    color: self.brushes.get().active(BrushKind::Paint).color,
                     opacity: self.bindings.paint_opacity.get().clamp(0.0, 1.0),
                     softness: self.bindings.paint_softness.get().clamp(0.0, 1.0),
                 };
@@ -281,7 +281,7 @@ impl EditorCanvas {
                     fill_object_at(&document, document_point)
                 };
                 if let Some((source_layer, id)) = target {
-                    let color = self.brushes.get().active().color;
+                    let color = self.brushes.get().active(BrushKind::Paint).color;
                     self.document
                         .update(|document| document.fill_from_outline(source_layer, id, color));
                     let mut state = self.controller.get_mut();
@@ -295,7 +295,7 @@ impl EditorCanvas {
                         region_fill::region_at(&document, document_point)
                     };
                     if let Some(path) = region {
-                        let color = self.brushes.get().active().color;
+                        let color = self.brushes.get().active(BrushKind::Paint).color;
                         self.document
                             .update(|document| document.add_fill_region(path, color));
                     }
@@ -337,9 +337,9 @@ impl EditorCanvas {
                 if !inside_drawing_bounds {
                     return;
                 }
-                let brush = self.brushes.get().active().clone();
+                let brush = self.brushes.get().active(BrushKind::Paint).clone();
                 let width = self.bindings.blob_width.get();
-                let style = paint_brush_style(brush.color, width);
+                let style = paint_brush_style(&brush, width);
                 self.controller.get_mut().interaction = Interaction::DrawingBlob {
                     raw_points: vec![document_point],
                     preview: fit_paint_stroke(
@@ -801,7 +801,7 @@ impl EditorCanvas {
 
     fn active_object_style(&self) -> ObjectStyle {
         ObjectStyle {
-            stroke: self.brushes.get().active().stroke_style(),
+            stroke: self.brushes.get().active(BrushKind::Line).stroke_style(),
             fill: document_color(self.bindings.fill_color.get()),
         }
     }
@@ -1222,12 +1222,18 @@ fn eraser_points(from: DocumentPoint, to: DocumentPoint, spacing: f32) -> Vec<Do
         .collect()
 }
 
-fn paint_brush_style(color: DocumentColor, width: f32) -> ObjectStyle {
+fn paint_brush_style(brush: &crate::brush::BrushDefinition, width: f32) -> ObjectStyle {
     ObjectStyle {
         stroke: crate::document::StrokeStyle {
             width: width.max(1.0),
-            color,
-            ..crate::document::StrokeStyle::default()
+            minimum_width: 1.0,
+            taper_start: 0.0,
+            taper_end: 0.0,
+            tip_roundness: 1.0,
+            tip_angle: 0.0,
+            cap: brush.cap,
+            join: brush.join,
+            color: brush.color,
         },
         fill: DocumentColor::TRANSPARENT,
     }

@@ -61,7 +61,7 @@ impl App for IrohaPaint {
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
             brush_width: State::new(2.5),
-            blob_width: State::new(40.0),
+            blob_width: State::new(18.0),
             paint_size: State::new(48.0),
             paint_opacity: State::new(0.8),
             paint_softness: State::new(0.2),
@@ -149,7 +149,9 @@ impl App for IrohaPaint {
             self.brush_settings.clone(),
             self.stroke_color.clone(),
             self.brush_width.clone(),
+            self.blob_width.clone(),
             self.smoothing.clone(),
+            self.active_tool.clone(),
         );
         let content = PopupMenuHost::new(content, pen_menu, self.pen_menu.clone());
         let content = PopupMenuHost::new(content, menu, self.file_menu.clone());
