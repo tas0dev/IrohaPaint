@@ -43,6 +43,9 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         height = bounds.height,
     );
     for layer in document.layers() {
+        if !layer.is_visible() {
+            continue;
+        }
         source.push_str("<g>");
         write_paint_layer(&mut source, layer.paint())?;
         for object in layer.objects() {
@@ -152,6 +155,9 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
                 return;
             }
             if *variable_width {
+                if path.is_closed() && style.fill.alpha > 0 {
+                    write_path_fill(source, path, style.fill);
+                }
                 write_variable_stroke(source, path, style.stroke);
                 return;
             }
@@ -174,6 +180,17 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
             );
         }
     }
+}
+
+fn write_path_fill(source: &mut String, path: &BezierPath, fill: DocumentColor) {
+    let mut commands = String::new();
+    write_path_commands(&mut commands, path);
+    let _ = write!(
+        source,
+        r##"<path d="{commands}" fill="{color}" fill-opacity="{opacity:.3}" stroke="none"/>"##,
+        color = color_hex(fill),
+        opacity = fill.alpha as f32 / 255.0,
+    );
 }
 
 fn write_variable_stroke(source: &mut String, path: &BezierPath, stroke: StrokeStyle) {
@@ -241,6 +258,9 @@ fn write_curve(
 fn artwork_bounds(document: &Document) -> Option<DocumentRect> {
     let mut bounds = None;
     for layer in document.layers() {
+        if !layer.is_visible() {
+            continue;
+        }
         if let Some(paint_bounds) = layer.paint().bounds() {
             bounds = Some(bounds.map_or(paint_bounds, |bounds| union(bounds, paint_bounds)));
         }

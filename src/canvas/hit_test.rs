@@ -6,12 +6,38 @@ use super::interaction::ResizeHandle;
 
 pub fn object_at(document: &Document, point: DocumentPoint, tolerance: f32) -> Option<ObjectId> {
     let layer = document.layers().get(document.selected_layer()?)?;
+    if !layer.is_visible() {
+        return None;
+    }
     layer
         .objects()
         .iter()
         .rev()
         .find(|object| kind_contains(object.kind(), point, tolerance))
         .map(|object| object.id())
+}
+
+pub fn fill_object_at(document: &Document, point: DocumentPoint) -> Option<(usize, ObjectId)> {
+    document
+        .layers()
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, layer)| layer.is_visible())
+        .find_map(|(layer_index, layer)| {
+            layer
+                .objects()
+                .iter()
+                .rev()
+                .find(|object| match object.kind() {
+                    ObjectKind::Rectangle { bounds, .. } => bounds.contains(point),
+                    ObjectKind::Ellipse { bounds, .. } => ellipse_contains(*bounds, point, 0.0),
+                    ObjectKind::Path { path, .. } => {
+                        path.is_closed() && filled_path_contains(path, point)
+                    }
+                })
+                .map(|object| (layer_index, object.id()))
+        })
 }
 
 pub fn resize_handle_at(

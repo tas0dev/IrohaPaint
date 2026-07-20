@@ -30,6 +30,7 @@ my @icons = (
 	'brush',
 	'droplet',
 	'paint-bucket',
+	'eraser',
 );
 
 make_path($output_dir);

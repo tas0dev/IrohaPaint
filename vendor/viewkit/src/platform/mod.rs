@@ -20,8 +20,6 @@ pub mod windows;
 #[cfg(target_os = "mochios")]
 pub mod mochios;
 
-pub use event::{
-    ButtonState, KeyCode, KeyModifiers, PlatformEvent, PointerButton,
-};
+pub use event::{ButtonState, KeyCode, KeyModifiers, PlatformEvent, PointerButton};
 pub(crate) use font::{DEFAULT_UI_FONT_FAMILY, load_platform_fonts};
 pub use window::{CursorIcon, PlatformApplication, PlatformWindow, WindowConfig};

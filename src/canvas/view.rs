@@ -8,10 +8,10 @@ use crate::document::{
     BezierNode, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, NodeComponent,
     ObjectKind, ObjectStyle, PaintDab,
 };
-use crate::editor::EditorTool;
+use crate::editor::{EditorTool, EraserMode};
 
 use super::hit_test::{
-    is_first_path_node, object_at, path_node_at, path_segment_at, resize_handle_at,
+    fill_object_at, is_first_path_node, object_at, path_node_at, path_segment_at, resize_handle_at,
 };
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::{NodePresentation, paint_editor_canvas};
@@ -36,6 +36,7 @@ pub struct CanvasBindings {
     pub paint_size: State<f32>,
     pub paint_opacity: State<f32>,
     pub paint_softness: State<f32>,
+    pub eraser_mode: State<usize>,
 }
 
 impl EditorCanvas {
@@ -255,8 +256,12 @@ impl EditorCanvas {
                     opacity: self.bindings.paint_opacity.get().clamp(0.0, 1.0),
                     softness: self.bindings.paint_softness.get().clamp(0.0, 1.0),
                 };
-                self.document
-                    .update(|document| document.begin_paint_stroke(&[dab]));
+                if !self
+                    .document
+                    .update(|document| document.begin_paint_stroke(&[dab]))
+                {
+                    return;
+                }
                 let mut state = self.controller.get_mut();
                 state.paint_dirty = Some(dab.bounds());
                 state.interaction = Interaction::Painting {
@@ -265,6 +270,57 @@ impl EditorCanvas {
                     spacing: (size * 0.12).max(0.75 / transform.zoom().max(0.01)),
                     dab,
                 };
+            }
+            EditorTool::Fill => {
+                if !inside_drawing_bounds {
+                    return;
+                }
+                let target = {
+                    let document = self.document.get();
+                    fill_object_at(&document, document_point)
+                };
+                if let Some((source_layer, id)) = target {
+                    let color = self.brushes.get().active().color;
+                    self.document
+                        .update(|document| document.fill_from_outline(source_layer, id, color));
+                    let mut state = self.controller.get_mut();
+                    state.active_pen_path = None;
+                    state.selected_nodes.clear();
+                    state.hovered_node = None;
+                    state.hovered_segment = None;
+                }
+            }
+            EditorTool::Eraser => {
+                if !inside_drawing_bounds {
+                    return;
+                }
+                match EraserMode::from_index(self.bindings.eraser_mode.get()) {
+                    EraserMode::Partial => {
+                        let radius = 8.0 / transform.zoom().max(0.01);
+                        let started = self.document.update(|document| {
+                            document.begin_erasing_path_sections(&[document_point], radius)
+                        });
+                        self.controller.get_mut().interaction = Interaction::ErasingPathSections {
+                            last: document_point,
+                            started,
+                            radius,
+                        };
+                    }
+                    EraserMode::Object => {
+                        let hit = {
+                            let document = self.document.get();
+                            object_at(&document, document_point, tolerance)
+                        };
+                        let started = hit.is_some_and(|id| {
+                            self.document
+                                .update(|document| document.begin_erasing_objects(&[id]))
+                        });
+                        self.controller.get_mut().interaction = Interaction::ErasingObjects {
+                            last: document_point,
+                            started,
+                        };
+                    }
+                }
             }
             EditorTool::BlobBrush => {
                 if !inside_drawing_bounds {
@@ -395,6 +451,70 @@ impl EditorCanvas {
                         fit_pencil_stroke(raw_points, brush.fitting_tolerance(transform.zoom()));
                 }
                 true
+            }
+            Interaction::ErasingObjects { last, started } => {
+                if !inside_drawing_bounds {
+                    *last = document_point;
+                    return false;
+                }
+                let tolerance = HIT_TOLERANCE / transform.zoom().max(0.01);
+                let ids = {
+                    let document = self.document.get();
+                    eraser_hits(&document, *last, document_point, tolerance)
+                };
+                *last = document_point;
+                if ids.is_empty() {
+                    return false;
+                }
+                let was_started = *started;
+                drop(state);
+                let changed = if was_started {
+                    self.document
+                        .update(|document| document.continue_erasing_objects(&ids))
+                } else {
+                    self.document
+                        .update(|document| document.begin_erasing_objects(&ids))
+                };
+                if changed
+                    && !was_started
+                    && let Interaction::ErasingObjects { started, .. } =
+                        &mut self.controller.get_mut().interaction
+                {
+                    *started = true;
+                }
+                changed
+            }
+            Interaction::ErasingPathSections {
+                last,
+                started,
+                radius,
+            } => {
+                if !inside_drawing_bounds {
+                    *last = document_point;
+                    return false;
+                }
+                let points = eraser_points(*last, document_point, (*radius * 0.5).max(0.1));
+                *last = document_point;
+                let was_started = *started;
+                let erase_radius = *radius;
+                drop(state);
+                let changed = if was_started {
+                    self.document.update(|document| {
+                        document.continue_erasing_path_sections(&points, erase_radius)
+                    })
+                } else {
+                    self.document.update(|document| {
+                        document.begin_erasing_path_sections(&points, erase_radius)
+                    })
+                };
+                if changed
+                    && !was_started
+                    && let Interaction::ErasingPathSections { started, .. } =
+                        &mut self.controller.get_mut().interaction
+                {
+                    *started = true;
+                }
+                changed
             }
             Interaction::Painting {
                 last_input,
@@ -891,12 +1011,17 @@ impl View for EditorCanvas {
             } => match (key, state) {
                 (KeyCode::Escape, ButtonState::Pressed) => {
                     let mut state = self.controller.get_mut();
-                    let cancel_paint = matches!(state.interaction, Interaction::Painting { .. });
+                    let cancel_change = matches!(state.interaction, Interaction::Painting { .. })
+                        || matches!(
+                            state.interaction,
+                            Interaction::ErasingObjects { started: true, .. }
+                                | Interaction::ErasingPathSections { started: true, .. }
+                        );
                     state.interaction = Interaction::Idle;
                     state.active_pen_path = None;
                     drop(state);
-                    if cancel_paint {
-                        self.document.update(Document::cancel_paint_stroke);
+                    if cancel_change {
+                        self.document.update(Document::cancel_in_progress_change);
                     }
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
@@ -904,31 +1029,40 @@ impl View for EditorCanvas {
                 (KeyCode::Space, key_state) => {
                     let mut state = self.controller.get_mut();
                     state.space_pressed = *key_state == ButtonState::Pressed;
-                    let cancel_paint = *key_state == ButtonState::Pressed
-                        && matches!(state.interaction, Interaction::Painting { .. });
+                    let cancel_change = *key_state == ButtonState::Pressed
+                        && (matches!(state.interaction, Interaction::Painting { .. })
+                            || matches!(
+                                state.interaction,
+                                Interaction::ErasingObjects { started: true, .. }
+                                    | Interaction::ErasingPathSections { started: true, .. }
+                            ));
                     if *key_state == ButtonState::Pressed
                         && matches!(
                             state.interaction,
                             Interaction::DrawingPencil { .. }
                                 | Interaction::DrawingBlob { .. }
                                 | Interaction::Painting { .. }
+                                | Interaction::ErasingObjects { .. }
+                                | Interaction::ErasingPathSections { .. }
                         )
                     {
                         state.interaction = Interaction::Idle;
                     }
                     drop(state);
-                    if cancel_paint {
-                        self.document.update(Document::cancel_paint_stroke);
+                    if cancel_change {
+                        self.document.update(Document::cancel_in_progress_change);
                     }
                     EventResult::Consumed
                 }
                 (KeyCode::Z, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
-                    let painting = matches!(
+                    let in_progress = matches!(
                         self.controller.get().interaction,
                         Interaction::Painting { .. }
+                            | Interaction::ErasingObjects { started: true, .. }
+                            | Interaction::ErasingPathSections { started: true, .. }
                     );
-                    if painting {
-                        self.document.update(Document::cancel_paint_stroke);
+                    if in_progress {
+                        self.document.update(Document::cancel_in_progress_change);
                     } else if modifiers.shift {
                         self.document.update(Document::redo);
                     } else {
@@ -939,19 +1073,21 @@ impl View for EditorCanvas {
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
-                    if painting {
+                    if in_progress {
                         canvas.interaction = Interaction::Idle;
                     }
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
                 }
                 (KeyCode::Y, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
-                    let painting = matches!(
+                    let in_progress = matches!(
                         self.controller.get().interaction,
                         Interaction::Painting { .. }
+                            | Interaction::ErasingObjects { started: true, .. }
+                            | Interaction::ErasingPathSections { started: true, .. }
                     );
-                    if painting {
-                        self.document.update(Document::cancel_paint_stroke);
+                    if in_progress {
+                        self.document.update(Document::cancel_in_progress_change);
                     } else {
                         self.document.update(Document::redo);
                     }
@@ -960,7 +1096,7 @@ impl View for EditorCanvas {
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
-                    if painting {
+                    if in_progress {
                         canvas.interaction = Interaction::Idle;
                     }
                     context.request_redraw_in(bounds);
@@ -985,7 +1121,10 @@ impl View for EditorCanvas {
                 state.modifiers = KeyModifiers::default();
                 if matches!(
                     state.interaction,
-                    Interaction::Panning { .. } | Interaction::Painting { .. }
+                    Interaction::Panning { .. }
+                        | Interaction::Painting { .. }
+                        | Interaction::ErasingObjects { .. }
+                        | Interaction::ErasingPathSections { .. }
                 ) {
                     state.interaction = Interaction::Idle;
                 }
@@ -1020,6 +1159,42 @@ fn paint_dab_bounds(dabs: &[PaintDab]) -> Option<DocumentRect> {
             height: bottom - y,
         }
     })
+}
+
+fn eraser_hits(
+    document: &Document,
+    from: DocumentPoint,
+    to: DocumentPoint,
+    tolerance: f32,
+) -> Vec<crate::document::ObjectId> {
+    let delta_x = to.x - from.x;
+    let delta_y = to.y - from.y;
+    let distance = (delta_x * delta_x + delta_y * delta_y).sqrt();
+    let steps = (distance / (tolerance * 0.5).max(0.1)).ceil().max(1.0) as usize;
+    let mut ids = Vec::new();
+    for step in 0..=steps {
+        let amount = step as f32 / steps as f32;
+        let point = DocumentPoint::new(from.x + delta_x * amount, from.y + delta_y * amount);
+        if let Some(id) = object_at(document, point, tolerance)
+            && !ids.contains(&id)
+        {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+fn eraser_points(from: DocumentPoint, to: DocumentPoint, spacing: f32) -> Vec<DocumentPoint> {
+    let delta_x = to.x - from.x;
+    let delta_y = to.y - from.y;
+    let distance = (delta_x * delta_x + delta_y * delta_y).sqrt();
+    let steps = (distance / spacing.max(0.1)).ceil().max(1.0) as usize;
+    (0..=steps)
+        .map(|step| {
+            let amount = step as f32 / steps as f32;
+            DocumentPoint::new(from.x + delta_x * amount, from.y + delta_y * amount)
+        })
+        .collect()
 }
 
 fn blob_style(color: DocumentColor) -> ObjectStyle {

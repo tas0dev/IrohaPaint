@@ -14,6 +14,7 @@ pub struct InspectorBindings {
     pub paint_size: State<f32>,
     pub paint_opacity: State<f32>,
     pub paint_softness: State<f32>,
+    pub eraser_mode: State<usize>,
     pub smoothing: State<f32>,
     pub inspected_object: State<Option<ObjectId>>,
     pub layer_name: State<String>,
@@ -31,6 +32,8 @@ pub fn view(
     let tool = active_tool.get();
     let painting_blob = tool == EditorTool::BlobBrush;
     let painting_raster = tool == EditorTool::Paint;
+    let filling = tool == EditorTool::Fill;
+    let erasing = tool == EditorTool::Eraser;
     let selected_object = if edits_selection(tool) {
         current_document.selected_object()
     } else {
@@ -56,12 +59,21 @@ pub fn view(
     let selected_layer_name = selected_layer
         .and_then(|index| current_document.layers().get(index))
         .map(|layer| layer.name().to_owned());
+    let selected_layer_visible = selected_layer
+        .and_then(|index| current_document.layers().get(index))
+        .is_some_and(|layer| layer.is_visible());
     let layer_rows = current_document
         .layers()
         .iter()
         .enumerate()
+        .rev()
         .map(|(index, layer)| {
             ListRow::new(layer.name())
+                .trailing(if layer.is_visible() {
+                    "Visible"
+                } else {
+                    "Hidden"
+                })
                 .selected(selected_layer == Some(index))
                 .on_select({
                     let document = document.clone();
@@ -77,7 +89,11 @@ pub fn view(
                 })
         })
         .collect::<Vec<_>>();
-    let editing_fill = !painting_blob && !painting_raster && bindings.color_target.get() == 1;
+    let editing_fill = !painting_blob
+        && !painting_raster
+        && !filling
+        && !erasing
+        && bindings.color_target.get() == 1;
     let selected_color = if editing_fill {
         bindings.fill_color.get()
     } else {
@@ -139,7 +155,58 @@ pub fn view(
                 ),
         )
         .child(
-            Text::new(if painting_blob || painting_raster {
+            HStack::new()
+                .gap(StackGap::Small)
+                .child(
+                    Button::new(if selected_layer_visible {
+                        "Hide"
+                    } else {
+                        "Show"
+                    })
+                    .on_click({
+                        let document = document.clone();
+                        let canvas = canvas.clone();
+                        move || {
+                            if document.update(Document::toggle_selected_layer_visibility) {
+                                clear_canvas_selection(&canvas);
+                            }
+                        }
+                    }),
+                )
+                .child(
+                    Button::new("Move Up")
+                        .enabled(
+                            selected_layer
+                                .is_some_and(|index| index + 1 < current_document.layers().len()),
+                        )
+                        .on_click({
+                            let document = document.clone();
+                            let canvas = canvas.clone();
+                            move || {
+                                if document.update(Document::move_selected_layer_up) {
+                                    clear_canvas_selection(&canvas);
+                                }
+                            }
+                        }),
+                )
+                .child(
+                    Button::new("Move Down")
+                        .enabled(selected_layer.is_some_and(|index| index > 0))
+                        .on_click({
+                            let document = document.clone();
+                            let canvas = canvas.clone();
+                            move || {
+                                if document.update(Document::move_selected_layer_down) {
+                                    clear_canvas_selection(&canvas);
+                                }
+                            }
+                        }),
+                ),
+        )
+        .child(
+            Text::new(if erasing {
+                "Eraser"
+            } else if painting_blob || painting_raster || filling {
                 "Paint"
             } else {
                 "Appearance"
@@ -148,16 +215,31 @@ pub fn view(
         )
         .child(Divider::new());
 
-    if !painting_blob && !painting_raster {
+    if !painting_blob && !painting_raster && !filling && !erasing {
         content = content.child(
             SegmentedControl::new(bindings.color_target.binding())
                 .item(0, "Stroke")
                 .item(1, "Fill"),
         );
     }
-    content = content.child(Text::new(color_label(selected_color)));
+    if !erasing {
+        content = content.child(Text::new(color_label(selected_color)));
+    }
 
-    content = if editing_fill {
+    content = if erasing {
+        let object_mode = bindings.eraser_mode.get() == 1;
+        content
+            .child(
+                SegmentedControl::new(bindings.eraser_mode.binding())
+                    .item(0, "Partial")
+                    .item(1, "Object"),
+            )
+            .child(Text::new(if object_mode {
+                "Drag across an object to remove it."
+            } else {
+                "Drag across a vector stroke to cut away that section."
+            }))
+    } else if editing_fill {
         content
             .child(ColorPicker::new(bindings.fill_color.binding()).on_commit({
                 let document = document.clone();
@@ -184,59 +266,63 @@ pub fn view(
                 }
             }))
     } else {
-        content
-            .child(
-                ColorPicker::new(bindings.stroke_color.binding()).on_commit({
-                    let brushes = brushes.clone();
-                    let document = document.clone();
-                    let active_tool = active_tool.clone();
-                    move |color| {
-                        let color = document_color(color);
-                        brushes
-                            .update(|library| library.update_active(|brush| brush.color = color));
-                        if edits_selection(active_tool.get()) {
-                            document.update(|document| document.set_selected_stroke_color(color));
-                        }
+        let content = content.child(
+            ColorPicker::new(bindings.stroke_color.binding()).on_commit({
+                let brushes = brushes.clone();
+                let document = document.clone();
+                let active_tool = active_tool.clone();
+                move |color| {
+                    let color = document_color(color);
+                    brushes.update(|library| library.update_active(|brush| brush.color = color));
+                    if edits_selection(active_tool.get()) {
+                        document.update(|document| document.set_selected_stroke_color(color));
                     }
-                }),
-            )
-            .child(Text::new(format!(
-                "Size — {:.1} px",
-                if painting_blob {
-                    bindings.blob_width.get()
-                } else if painting_raster {
-                    bindings.paint_size.get()
-                } else {
-                    bindings.brush_width.get()
                 }
-            )))
-            .child(if painting_blob {
-                Slider::new(bindings.blob_width.binding())
-                    .range(1.0..=200.0)
-                    .step(1.0)
-            } else if painting_raster {
-                Slider::new(bindings.paint_size.binding())
-                    .range(1.0..=256.0)
-                    .step(1.0)
-            } else {
-                Slider::new(bindings.brush_width.binding())
-                    .range(0.5..=32.0)
-                    .step(0.5)
-                    .on_commit({
-                        let brushes = brushes.clone();
-                        let document = document.clone();
-                        let active_tool = active_tool.clone();
-                        move |width| {
-                            brushes.update(|library| {
-                                library.update_active(|brush| brush.width = width)
-                            });
-                            if edits_selection(active_tool.get()) {
-                                document
-                                    .update(|document| document.set_selected_stroke_width(width));
+            }),
+        );
+        if filling {
+            content
+        } else {
+            content
+                .child(Text::new(format!(
+                    "Size — {:.1} px",
+                    if painting_blob {
+                        bindings.blob_width.get()
+                    } else if painting_raster {
+                        bindings.paint_size.get()
+                    } else {
+                        bindings.brush_width.get()
+                    }
+                )))
+                .child(if painting_blob {
+                    Slider::new(bindings.blob_width.binding())
+                        .range(1.0..=200.0)
+                        .step(1.0)
+                } else if painting_raster {
+                    Slider::new(bindings.paint_size.binding())
+                        .range(1.0..=256.0)
+                        .step(1.0)
+                } else {
+                    Slider::new(bindings.brush_width.binding())
+                        .range(0.5..=32.0)
+                        .step(0.5)
+                        .on_commit({
+                            let brushes = brushes.clone();
+                            let document = document.clone();
+                            let active_tool = active_tool.clone();
+                            move |width| {
+                                brushes.update(|library| {
+                                    library.update_active(|brush| brush.width = width)
+                                });
+                                if edits_selection(active_tool.get()) {
+                                    document.update(|document| {
+                                        document.set_selected_stroke_width(width)
+                                    });
+                                }
                             }
-                        }
-                    })
-            })
+                        })
+                })
+        }
     };
 
     if painting_raster {
@@ -386,4 +472,12 @@ fn selected_path_nodes(
         .filter_map(|(object_id, index)| (*object_id == id).then_some(*index))
         .collect::<Vec<_>>();
     (!indices.is_empty()).then_some((id, indices))
+}
+
+fn clear_canvas_selection(canvas: &CanvasController) {
+    let mut canvas = canvas.get_mut();
+    canvas.active_pen_path = None;
+    canvas.selected_nodes.clear();
+    canvas.hovered_node = None;
+    canvas.hovered_segment = None;
 }

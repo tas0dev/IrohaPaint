@@ -31,6 +31,7 @@ pub struct IrohaPaint {
     paint_size: State<f32>,
     paint_opacity: State<f32>,
     paint_softness: State<f32>,
+    eraser_mode: State<usize>,
     smoothing: State<f32>,
     inspected_object: State<Option<ObjectId>>,
 }
@@ -64,6 +65,7 @@ impl App for IrohaPaint {
             paint_size: State::new(48.0),
             paint_opacity: State::new(0.8),
             paint_softness: State::new(0.2),
+            eraser_mode: State::new(0),
             smoothing: State::new(0.72),
             inspected_object: State::new(None),
         }
@@ -106,6 +108,7 @@ impl App for IrohaPaint {
                                 paint_size: self.paint_size.clone(),
                                 paint_opacity: self.paint_opacity.clone(),
                                 paint_softness: self.paint_softness.clone(),
+                                eraser_mode: self.eraser_mode.clone(),
                             },
                         )
                         .layout()
@@ -126,6 +129,7 @@ impl App for IrohaPaint {
                             paint_size: self.paint_size.clone(),
                             paint_opacity: self.paint_opacity.clone(),
                             paint_softness: self.paint_softness.clone(),
+                            eraser_mode: self.eraser_mode.clone(),
                             smoothing: self.smoothing.clone(),
                             inspected_object: self.inspected_object.clone(),
                             layer_name: self.layer_name.clone(),

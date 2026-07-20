@@ -72,6 +72,9 @@ pub fn paint_editor_canvas(
     }
 
     for layer in document.layers() {
+        if !layer.is_visible() {
+            continue;
+        }
         paint_raster_layer(layer.paint(), transform, bounds, context);
         for object in layer.objects() {
             if let Some(preview) = interaction.preview_kind(object.id()) {
@@ -125,7 +128,11 @@ pub fn paint_editor_canvas(
             }
         } else if !matches!(
             active_tool,
-            EditorTool::Pencil | EditorTool::Paint | EditorTool::BlobBrush
+            EditorTool::Pencil
+                | EditorTool::Paint
+                | EditorTool::Fill
+                | EditorTool::Eraser
+                | EditorTool::BlobBrush
         ) {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
@@ -200,6 +207,22 @@ fn paint_kind(
             variable_width,
         } => {
             if *variable_width {
+                if path.is_closed() && style.fill.alpha > 0 {
+                    paint_svg_path(
+                        path,
+                        ObjectStyle {
+                            stroke: StrokeStyle {
+                                color: DocumentColor::TRANSPARENT,
+                                width: 0.1,
+                                ..StrokeStyle::default()
+                            },
+                            fill: style.fill,
+                        },
+                        transform,
+                        canvas_bounds,
+                        context,
+                    );
+                }
                 paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
             } else {
                 paint_svg_path(path, *style, transform, canvas_bounds, context);

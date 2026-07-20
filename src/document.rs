@@ -1,9 +1,11 @@
 mod paint_layer;
 mod path_edit;
+mod path_erase;
 mod stroke_outline;
 
 pub(crate) use paint_layer::{PAINT_TILE_SIZE, PaintDab, PaintLayer};
 use path_edit::simplification_candidates;
+use path_erase::erase_path;
 pub(crate) use stroke_outline::variable_stroke_outlines;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -396,6 +398,7 @@ pub struct Layer {
     name: String,
     objects: Vec<DocumentObject>,
     paint: PaintLayer,
+    visible: bool,
 }
 
 impl Layer {
@@ -404,6 +407,7 @@ impl Layer {
             name: name.into(),
             objects: Vec::new(),
             paint: PaintLayer::default(),
+            visible: true,
         }
     }
 
@@ -417,6 +421,10 @@ impl Layer {
 
     pub fn paint(&self) -> &PaintLayer {
         &self.paint
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
     }
 }
 
@@ -539,6 +547,44 @@ impl Document {
         true
     }
 
+    pub fn toggle_selected_layer_visibility(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        self.record_change();
+        self.layers[index].visible = !self.layers[index].visible;
+        self.selected_object = None;
+        true
+    }
+
+    pub fn move_selected_layer_up(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        if index + 1 >= self.layers.len() {
+            return false;
+        }
+        self.record_change();
+        self.layers.swap(index, index + 1);
+        self.selected_layer = Some(index + 1);
+        self.selected_object = None;
+        true
+    }
+
+    pub fn move_selected_layer_down(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        self.record_change();
+        self.layers.swap(index, index - 1);
+        self.selected_layer = Some(index - 1);
+        self.selected_object = None;
+        true
+    }
+
     pub fn selected_object(&self) -> Option<ObjectId> {
         self.selected_object
     }
@@ -555,13 +601,18 @@ impl Document {
         });
     }
 
-    pub fn begin_paint_stroke(&mut self, dabs: &[PaintDab]) {
-        if dabs.is_empty() {
-            return;
+    pub fn begin_paint_stroke(&mut self, dabs: &[PaintDab]) -> bool {
+        let selected_visible = self
+            .selected_layer
+            .and_then(|index| self.layers.get(index))
+            .is_some_and(|layer| layer.visible);
+        if dabs.is_empty() || !selected_visible {
+            return false;
         }
         self.record_change();
         self.selected_object = None;
         self.apply_paint_dabs(dabs);
+        true
     }
 
     pub fn continue_paint_stroke(&mut self, dabs: &[PaintDab]) {
@@ -570,11 +621,97 @@ impl Document {
         }
     }
 
-    pub fn cancel_paint_stroke(&mut self) {
+    pub fn cancel_in_progress_change(&mut self) {
         if let Some(snapshot) = self.undo_stack.pop() {
             self.restore(snapshot);
             self.redo_stack.clear();
         }
+    }
+
+    pub fn fill_from_outline(
+        &mut self,
+        source_layer: usize,
+        id: ObjectId,
+        color: DocumentColor,
+    ) -> bool {
+        let Some(target_layer) = self.selected_layer else {
+            return false;
+        };
+        if !self.layers[target_layer].visible || !self.layers[source_layer].visible {
+            return false;
+        }
+        let Some(object_index) = self.layers[source_layer]
+            .objects
+            .iter()
+            .position(|object| object.id == id)
+        else {
+            return false;
+        };
+        if source_layer == target_layer {
+            let current = self.layers[source_layer].objects[object_index].style().fill;
+            if current == color {
+                return false;
+            }
+            self.record_change();
+            match &mut self.layers[source_layer].objects[object_index].kind {
+                ObjectKind::Rectangle { style, .. }
+                | ObjectKind::Ellipse { style, .. }
+                | ObjectKind::Path { style, .. } => style.fill = color,
+            }
+            self.selected_object = Some(id);
+            return true;
+        }
+        let source = self.layers[source_layer].objects[object_index].kind.clone();
+        let style = ObjectStyle {
+            stroke: StrokeStyle {
+                color: DocumentColor::TRANSPARENT,
+                width: 0.1,
+                ..StrokeStyle::default()
+            },
+            fill: color,
+        };
+        let kind = match source {
+            ObjectKind::Rectangle { bounds, .. } => ObjectKind::Rectangle { bounds, style },
+            ObjectKind::Ellipse { bounds, .. } => ObjectKind::Ellipse { bounds, style },
+            ObjectKind::Path { path, .. } if path.is_closed() => ObjectKind::Path {
+                path,
+                style,
+                variable_width: false,
+            },
+            ObjectKind::Path { .. } => return false,
+        };
+        self.add_object(kind);
+        true
+    }
+
+    pub fn begin_erasing_objects(&mut self, ids: &[ObjectId]) -> bool {
+        if !self.can_erase_objects(ids) {
+            return false;
+        }
+        self.record_change();
+        self.erase_objects(ids)
+    }
+
+    pub fn continue_erasing_objects(&mut self, ids: &[ObjectId]) -> bool {
+        self.erase_objects(ids)
+    }
+
+    pub fn begin_erasing_path_sections(&mut self, centers: &[DocumentPoint], radius: f32) -> bool {
+        let snapshot = self.snapshot();
+        if !self.erase_path_sections(centers, radius) {
+            return false;
+        }
+        self.undo_stack.push(snapshot);
+        self.redo_stack.clear();
+        true
+    }
+
+    pub fn continue_erasing_path_sections(
+        &mut self,
+        centers: &[DocumentPoint],
+        radius: f32,
+    ) -> bool {
+        self.erase_path_sections(centers, radius)
     }
 
     pub fn object(&self, id: ObjectId) -> Option<&DocumentObject> {
@@ -865,6 +1002,100 @@ impl Document {
         }
     }
 
+    fn can_erase_objects(&self, ids: &[ObjectId]) -> bool {
+        self.selected_layer
+            .and_then(|index| self.layers.get(index))
+            .filter(|layer| layer.visible)
+            .is_some_and(|layer| layer.objects.iter().any(|object| ids.contains(&object.id)))
+    }
+
+    fn erase_objects(&mut self, ids: &[ObjectId]) -> bool {
+        let Some(layer_index) = self.selected_layer else {
+            return false;
+        };
+        if !self.layers[layer_index].visible {
+            return false;
+        }
+        let old_len = self.layers[layer_index].objects.len();
+        self.layers[layer_index]
+            .objects
+            .retain(|object| !ids.contains(&object.id));
+        let changed = self.layers[layer_index].objects.len() != old_len;
+        if changed && self.selected_object.is_some_and(|id| ids.contains(&id)) {
+            self.selected_object = None;
+        }
+        changed
+    }
+
+    fn erase_path_sections(&mut self, centers: &[DocumentPoint], radius: f32) -> bool {
+        let Some(layer_index) = self.selected_layer else {
+            return false;
+        };
+        if !self.layers[layer_index].visible || centers.is_empty() || radius <= 0.0 {
+            return false;
+        }
+
+        let old_objects = std::mem::take(&mut self.layers[layer_index].objects);
+        let mut objects = Vec::with_capacity(old_objects.len());
+        let mut changed = false;
+        for object in old_objects {
+            let DocumentObject { id, kind } = object;
+            match kind {
+                ObjectKind::Path {
+                    path,
+                    style,
+                    variable_width,
+                } => {
+                    let was_closed = path.is_closed();
+                    let effective_radius = radius + style.stroke.width.max(0.0) * 0.5;
+                    let Some(parts) = erase_path(&path, centers, effective_radius) else {
+                        objects.push(DocumentObject {
+                            id,
+                            kind: ObjectKind::Path {
+                                path,
+                                style,
+                                variable_width,
+                            },
+                        });
+                        continue;
+                    };
+                    changed = true;
+                    let part_style = if was_closed {
+                        ObjectStyle {
+                            fill: DocumentColor::TRANSPARENT,
+                            ..style
+                        }
+                    } else {
+                        style
+                    };
+                    for (part_index, part) in parts.into_iter().enumerate() {
+                        let part_id = if part_index == 0 {
+                            id
+                        } else {
+                            let new_id = ObjectId(self.next_object_id);
+                            self.next_object_id += 1;
+                            new_id
+                        };
+                        objects.push(DocumentObject {
+                            id: part_id,
+                            kind: ObjectKind::Path {
+                                path: part,
+                                style: part_style,
+                                variable_width,
+                            },
+                        });
+                    }
+                }
+                kind => objects.push(DocumentObject { id, kind }),
+            }
+        }
+        self.layers[layer_index].objects = objects;
+        if changed {
+            self.selected_object = None;
+        }
+        changed
+    }
+
     fn add_object(&mut self, kind: ObjectKind) -> ObjectId {
         self.record_change();
 
@@ -873,6 +1104,7 @@ impl Document {
         let object = DocumentObject { id, kind };
 
         let layer_index = self.selected_layer.unwrap_or(0);
+        self.layers[layer_index].visible = true;
         self.layers[layer_index].objects.push(object);
         self.selected_object = Some(id);
         id
@@ -880,6 +1112,9 @@ impl Document {
 
     fn apply_paint_dabs(&mut self, dabs: &[PaintDab]) {
         let layer_index = self.selected_layer.unwrap_or(0);
+        if !self.layers[layer_index].visible {
+            return;
+        }
         let clip = match self.properties.canvas_size {
             CanvasSize::FitArtwork => None,
             CanvasSize::Custom { width, height } => Some(DocumentRect {

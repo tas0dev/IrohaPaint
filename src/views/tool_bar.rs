@@ -84,6 +84,8 @@ fn tool_icon(tool: EditorTool) -> &'static str {
         EditorTool::NodeEdit => "spline",
         EditorTool::Pencil => "pen-tool",
         EditorTool::Paint => "brush",
+        EditorTool::Fill => "paint-bucket",
+        EditorTool::Eraser => "eraser",
         EditorTool::BlobBrush => "droplet",
         EditorTool::Pen => "line",
         EditorTool::Rectangle => "square",

@@ -70,6 +70,15 @@ pub enum Interaction {
         spacing: f32,
         dab: PaintDab,
     },
+    ErasingObjects {
+        last: DocumentPoint,
+        started: bool,
+    },
+    ErasingPathSections {
+        last: DocumentPoint,
+        started: bool,
+        radius: f32,
+    },
     DrawingBlob {
         raw_points: Vec<DocumentPoint>,
         preview: Option<BezierPath>,

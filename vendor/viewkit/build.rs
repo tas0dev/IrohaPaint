@@ -11,31 +11,24 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rustc-check-cfg=cfg(target_os, values(\"mochios\"))");
 
-    let target_os = env::var("CARGO_CFG_TARGET_OS")
-        .expect("CARGO_CFG_TARGET_OS is not set");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is not set");
 
     let candidates = font_candidates(&target_os);
 
-    let Some(candidate) = candidates
-        .iter()
-        .find(|candidate| candidate.path.exists())
-    else {
+    let Some(candidate) = candidates.iter().find(|candidate| candidate.path.exists()) else {
         panic!("no usable system font found for ViewKit on {target_os}");
     };
 
-    let out_dir = env::var("OUT_DIR")
-        .expect("OUT_DIR is not set");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR is not set");
 
-    let target_path = Path::new(&out_dir)
-        .join("default_ui_font.ttf");
+    let target_path = Path::new(&out_dir).join("default_ui_font.ttf");
 
-    fs::copy(&candidate.path, &target_path)
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to copy default font from {}: {err}",
-                candidate.path.display()
-            )
-        });
+    fs::copy(&candidate.path, &target_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to copy default font from {}: {err}",
+            candidate.path.display()
+        )
+    });
 
     println!(
         "cargo:rustc-env=VIEWKIT_DEFAULT_UI_FONT_FAMILY={}",
@@ -81,21 +74,15 @@ fn windows_font_candidates() -> Vec<FontCandidate> {
 fn linux_font_candidates() -> Vec<FontCandidate> {
     vec![
         FontCandidate {
-            path: PathBuf::from(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            ),
+            path: PathBuf::from("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
             family: "DejaVu Sans",
         },
         FontCandidate {
-            path: PathBuf::from(
-                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            ),
+            path: PathBuf::from("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
             family: "Noto Sans",
         },
         FontCandidate {
-            path: PathBuf::from(
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            ),
+            path: PathBuf::from("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
             family: "Liberation Sans",
         },
     ]

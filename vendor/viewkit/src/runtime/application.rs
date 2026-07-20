@@ -144,9 +144,9 @@ where
         let viewport_bounds = viewport.logical_bounds();
 
         let dirty_bounds = match std::mem::take(&mut self.pending_redraw) {
-            RedrawRequest::Region(bounds) => bounds
-                .intersection(viewport_bounds)
-                .unwrap_or_default(),
+            RedrawRequest::Region(bounds) => {
+                bounds.intersection(viewport_bounds).unwrap_or_default()
+            }
 
             RedrawRequest::None | RedrawRequest::Full => viewport_bounds,
         };
