@@ -296,7 +296,7 @@ impl Switch {
                     }
                 };
 
-                let Some((was_dragging, drag_checked)) = release else {
+                let Some((was_dragging, _drag_checked)) = release else {
                     return EventResult::Ignored;
                 };
 
