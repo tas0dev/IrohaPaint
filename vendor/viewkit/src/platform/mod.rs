@@ -2,7 +2,7 @@ mod event;
 mod font;
 mod window;
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 #[path = "linux/mod.rs"]
 mod desktop;
 
@@ -19,6 +19,9 @@ pub mod windows;
 
 #[cfg(target_os = "mochios")]
 pub mod mochios;
+
+#[cfg(target_os = "macos")]
+pub mod macos;
 
 pub use event::{ButtonState, KeyCode, KeyModifiers, PlatformEvent, PointerButton};
 pub(crate) use font::{DEFAULT_UI_FONT_FAMILY, load_platform_fonts};
