@@ -5,7 +5,7 @@ mod stroke_outline;
 
 pub(crate) use paint_layer::{PAINT_TILE_SIZE, PaintDab, PaintLayer};
 use path_edit::simplification_candidates;
-use path_erase::erase_path;
+use path_erase::{erase_path, eraser_cutout};
 pub(crate) use stroke_outline::variable_stroke_outlines;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -328,6 +328,7 @@ pub enum ObjectKind {
         path: BezierPath,
         style: ObjectStyle,
         variable_width: bool,
+        cutouts: Vec<BezierPath>,
     },
 }
 
@@ -366,12 +367,19 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => {
                 *bounds = new_bounds;
             }
-            ObjectKind::Path { path, .. } => {
+            ObjectKind::Path { path, cutouts, .. } => {
                 let old_bounds = path_bounds(path);
                 for node in &mut path.nodes {
                     scale_point(&mut node.position, old_bounds, new_bounds);
                     scale_point(&mut node.handle_in, old_bounds, new_bounds);
                     scale_point(&mut node.handle_out, old_bounds, new_bounds);
+                }
+                for cutout in cutouts {
+                    for node in &mut cutout.nodes {
+                        scale_point(&mut node.position, old_bounds, new_bounds);
+                        scale_point(&mut node.handle_in, old_bounds, new_bounds);
+                        scale_point(&mut node.handle_out, old_bounds, new_bounds);
+                    }
                 }
             }
         }
@@ -382,11 +390,18 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => {
                 *bounds = bounds.translated(delta);
             }
-            ObjectKind::Path { path, .. } => {
+            ObjectKind::Path { path, cutouts, .. } => {
                 for node in &mut path.nodes {
                     translate_point(&mut node.position, delta);
                     translate_point(&mut node.handle_in, delta);
                     translate_point(&mut node.handle_out, delta);
+                }
+                for cutout in cutouts {
+                    for node in &mut cutout.nodes {
+                        translate_point(&mut node.position, delta);
+                        translate_point(&mut node.handle_in, delta);
+                        translate_point(&mut node.handle_out, delta);
+                    }
                 }
             }
         }
@@ -673,10 +688,11 @@ impl Document {
         let kind = match source {
             ObjectKind::Rectangle { bounds, .. } => ObjectKind::Rectangle { bounds, style },
             ObjectKind::Ellipse { bounds, .. } => ObjectKind::Ellipse { bounds, style },
-            ObjectKind::Path { path, .. } if path.is_closed() => ObjectKind::Path {
+            ObjectKind::Path { path, cutouts, .. } if path.is_closed() => ObjectKind::Path {
                 path,
                 style,
                 variable_width: false,
+                cutouts,
             },
             ObjectKind::Path { .. } => return false,
         };
@@ -764,6 +780,7 @@ impl Document {
             path: BezierPath::new(first_node),
             style,
             variable_width: false,
+            cutouts: Vec::new(),
         })
     }
 
@@ -775,6 +792,7 @@ impl Document {
                 ..ObjectStyle::default()
             },
             variable_width: true,
+            cutouts: Vec::new(),
         })
     }
 
@@ -783,6 +801,7 @@ impl Document {
             path,
             style,
             variable_width: false,
+            cutouts: Vec::new(),
         })
     }
 
@@ -1045,8 +1064,26 @@ impl Document {
                     path,
                     style,
                     variable_width,
+                    mut cutouts,
                 } => {
-                    let was_closed = path.is_closed();
+                    if path.is_closed() && style.fill.alpha > 0 {
+                        if let Some(cutout) = eraser_cutout(centers, radius)
+                            && rects_intersect(path_bounds(&path), path_bounds(&cutout))
+                        {
+                            cutouts.push(cutout);
+                            changed = true;
+                        }
+                        objects.push(DocumentObject {
+                            id,
+                            kind: ObjectKind::Path {
+                                path,
+                                style,
+                                variable_width,
+                                cutouts,
+                            },
+                        });
+                        continue;
+                    }
                     let effective_radius = radius + style.stroke.width.max(0.0) * 0.5;
                     let Some(parts) = erase_path(&path, centers, effective_radius) else {
                         objects.push(DocumentObject {
@@ -1055,19 +1092,12 @@ impl Document {
                                 path,
                                 style,
                                 variable_width,
+                                cutouts,
                             },
                         });
                         continue;
                     };
                     changed = true;
-                    let part_style = if was_closed {
-                        ObjectStyle {
-                            fill: DocumentColor::TRANSPARENT,
-                            ..style
-                        }
-                    } else {
-                        style
-                    };
                     for (part_index, part) in parts.into_iter().enumerate() {
                         let part_id = if part_index == 0 {
                             id
@@ -1080,8 +1110,9 @@ impl Document {
                             id: part_id,
                             kind: ObjectKind::Path {
                                 path: part,
-                                style: part_style,
+                                style,
                                 variable_width,
+                                cutouts: cutouts.clone(),
                             },
                         });
                     }
@@ -1202,6 +1233,13 @@ fn path_bounds(path: &BezierPath) -> DocumentRect {
         width: max_x - min_x,
         height: max_y - min_y,
     }
+}
+
+fn rects_intersect(first: DocumentRect, second: DocumentRect) -> bool {
+    first.x <= second.x + second.width
+        && first.x + first.width >= second.x
+        && first.y <= second.y + second.height
+        && first.y + first.height >= second.y
 }
 
 fn translate_point(point: &mut DocumentPoint, delta: DocumentPoint) {

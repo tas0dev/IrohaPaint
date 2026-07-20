@@ -205,6 +205,7 @@ fn paint_kind(
             path,
             style,
             variable_width,
+            cutouts,
         } => {
             if *variable_width {
                 if path.is_closed() && style.fill.alpha > 0 {
@@ -221,11 +222,12 @@ fn paint_kind(
                         transform,
                         canvas_bounds,
                         context,
+                        cutouts,
                     );
                 }
                 paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
             } else {
-                paint_svg_path(path, *style, transform, canvas_bounds, context);
+                paint_svg_path(path, *style, transform, canvas_bounds, context, cutouts);
             }
         }
     }
@@ -324,6 +326,7 @@ fn paint_svg_path(
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
+    cutouts: &[BezierPath],
 ) {
     if path.nodes().len() < 2 || canvas_bounds.is_empty() {
         return;
@@ -382,8 +385,27 @@ fn paint_svg_path(
         "#{:02X}{:02X}{:02X}",
         style.stroke.color.red, style.stroke.color.green, style.stroke.color.blue
     );
+    let mut mask = String::new();
+    let mask_attribute = if cutouts.is_empty() {
+        ""
+    } else {
+        let mut cutout_commands = String::new();
+        for cutout in cutouts {
+            write_path_commands(
+                &mut cutout_commands,
+                cutout,
+                transform,
+                canvas_bounds,
+                svg_bounds,
+            );
+        }
+        mask = format!(
+            r#"<defs><mask id="cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white"/><path d="{cutout_commands}" fill="black" stroke="black"/></mask></defs>"#,
+        );
+        r#" mask="url(#cutouts)""#
+    };
     let svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="{fill}" fill-opacity="{fill_opacity}" stroke="{stroke}" stroke-opacity="{stroke_opacity}" stroke-width="{stroke_width}" stroke-linecap="{stroke_cap}" stroke-linejoin="{stroke_join}"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{mask}<path d="{commands}" fill="{fill}" fill-opacity="{fill_opacity}" stroke="{stroke}" stroke-opacity="{stroke_opacity}" stroke-width="{stroke_width}" stroke-linecap="{stroke_cap}" stroke-linejoin="{stroke_join}"{mask_attribute}/></svg>"##,
         width = svg_bounds.size.width.max(1.0),
         height = svg_bounds.size.height.max(1.0),
         fill_opacity = style.fill.alpha as f32 / 255.0,
@@ -484,7 +506,7 @@ fn paint_draft(
             style,
             ..
         } => {
-            paint_svg_path(path, *style, transform, canvas_bounds, context);
+            paint_svg_path(path, *style, transform, canvas_bounds, context, &[]);
         }
         Interaction::PlacingPathNode {
             path_id: None,

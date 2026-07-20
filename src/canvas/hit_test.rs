@@ -198,12 +198,20 @@ fn kind_contains(kind: &ObjectKind, point: DocumentPoint, tolerance: f32) -> boo
     match kind {
         ObjectKind::Rectangle { bounds, .. } => expanded(*bounds, tolerance).contains(point),
         ObjectKind::Ellipse { bounds, .. } => ellipse_contains(*bounds, point, tolerance),
-        ObjectKind::Path { path, style, .. } => {
-            bezier_path_contains(path, point, tolerance + style.stroke.width / 2.0)
-                || (path.is_closed()
-                    && style.fill.alpha > 0
-                    && style.stroke.color.alpha == 0
-                    && filled_path_contains(path, point))
+        ObjectKind::Path {
+            path,
+            style,
+            cutouts,
+            ..
+        } => {
+            !cutouts
+                .iter()
+                .any(|cutout| filled_path_contains(cutout, point))
+                && (bezier_path_contains(path, point, tolerance + style.stroke.width / 2.0)
+                    || (path.is_closed()
+                        && style.fill.alpha > 0
+                        && style.stroke.color.alpha == 0
+                        && filled_path_contains(path, point)))
         }
     }
 }

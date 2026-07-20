@@ -190,6 +190,7 @@ fn appended_path_kind(
         path,
         style,
         variable_width,
+        cutouts,
     } = original
     else {
         return original.clone();
@@ -200,6 +201,7 @@ fn appended_path_kind(
         path,
         style: *style,
         variable_width: *variable_width,
+        cutouts: cutouts.clone(),
     }
 }
 
@@ -217,12 +219,21 @@ fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
             path,
             style,
             variable_width,
+            cutouts,
         } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(point.x + delta.x, point.y + delta.y)
             }),
             style: *style,
             variable_width: *variable_width,
+            cutouts: cutouts
+                .iter()
+                .map(|path| {
+                    transformed_path(path, |point| {
+                        DocumentPoint::new(point.x + delta.x, point.y + delta.y)
+                    })
+                })
+                .collect(),
         },
     }
 }
@@ -242,6 +253,7 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
             path,
             style,
             variable_width,
+            cutouts,
         } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(
@@ -263,6 +275,29 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
             }),
             style: *style,
             variable_width: *variable_width,
+            cutouts: cutouts
+                .iter()
+                .map(|path| {
+                    transformed_path(path, |point| {
+                        DocumentPoint::new(
+                            scale_axis(
+                                point.x,
+                                old_bounds.x,
+                                old_bounds.width,
+                                new_bounds.x,
+                                new_bounds.width,
+                            ),
+                            scale_axis(
+                                point.y,
+                                old_bounds.y,
+                                old_bounds.height,
+                                new_bounds.y,
+                                new_bounds.height,
+                            ),
+                        )
+                    })
+                })
+                .collect(),
         },
     }
 }
@@ -337,6 +372,7 @@ fn edited_path_kind(
         path,
         style,
         variable_width,
+        cutouts,
     } = original
     else {
         return original.clone();
@@ -354,6 +390,7 @@ fn edited_path_kind(
         path,
         style: *style,
         variable_width: *variable_width,
+        cutouts: cutouts.clone(),
     }
 }
 

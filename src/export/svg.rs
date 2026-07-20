@@ -42,6 +42,7 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         width = bounds.width,
         height = bounds.height,
     );
+    let mut mask_id = 0_u64;
     for layer in document.layers() {
         if !layer.is_visible() {
             continue;
@@ -49,7 +50,7 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         source.push_str("<g>");
         write_paint_layer(&mut source, layer.paint())?;
         for object in layer.objects() {
-            write_object(&mut source, object.kind());
+            write_object(&mut source, object.kind(), &mut mask_id);
         }
         source.push_str("</g>");
     }
@@ -114,7 +115,7 @@ fn base64(bytes: &[u8]) -> String {
     encoded
 }
 
-fn write_object(source: &mut String, kind: &ObjectKind) {
+fn write_object(source: &mut String, kind: &ObjectKind, mask_id: &mut u64) {
     match kind {
         ObjectKind::Rectangle { bounds, style } => {
             let _ = write!(
@@ -150,15 +151,26 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
             path,
             style,
             variable_width,
+            cutouts,
         } => {
             if path.nodes().len() < 2 {
                 return;
             }
+            let active_mask = (!cutouts.is_empty()).then(|| {
+                let id = *mask_id;
+                *mask_id += 1;
+                write_cutout_mask(source, id, cutouts);
+                let _ = write!(source, r#"<g mask="url(#cutout-{id})">"#);
+                id
+            });
             if *variable_width {
                 if path.is_closed() && style.fill.alpha > 0 {
                     write_path_fill(source, path, style.fill);
                 }
                 write_variable_stroke(source, path, style.stroke);
+                if active_mask.is_some() {
+                    source.push_str("</g>");
+                }
                 return;
             }
             let mut commands = String::new();
@@ -178,8 +190,22 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
                 cap = cap_name(style.stroke.cap),
                 join = join_name(style.stroke.join),
             );
+            if active_mask.is_some() {
+                source.push_str("</g>");
+            }
         }
     }
+}
+
+fn write_cutout_mask(source: &mut String, id: u64, cutouts: &[BezierPath]) {
+    let mut commands = String::new();
+    for cutout in cutouts {
+        write_path_commands(&mut commands, cutout);
+    }
+    let _ = write!(
+        source,
+        r#"<defs><mask id="cutout-{id}"><rect x="-10%" y="-10%" width="120%" height="120%" fill="white"/><path d="{commands}" fill="black" stroke="black"/></mask></defs>"#,
+    );
 }
 
 fn write_path_fill(source: &mut String, path: &BezierPath, fill: DocumentColor) {
@@ -282,6 +308,7 @@ fn object_bounds(kind: &ObjectKind) -> Option<DocumentRect> {
             path,
             style,
             variable_width,
+            ..
         } => {
             if *variable_width {
                 variable_stroke_outlines(path, style.stroke)

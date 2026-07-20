@@ -90,6 +90,94 @@ pub(super) fn erase_path(
     Some(runs.into_iter().filter_map(path_from_run).collect())
 }
 
+pub(super) fn eraser_cutout(centers: &[DocumentPoint], radius: f32) -> Option<BezierPath> {
+    let radius = radius.max(0.05);
+    let center = *centers.first()?;
+    let points = if centers.len() == 1 {
+        (0..24)
+            .map(|index| {
+                let angle = std::f32::consts::TAU * index as f32 / 24.0;
+                DocumentPoint::new(
+                    center.x + angle.cos() * radius,
+                    center.y + angle.sin() * radius,
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let first = centers[0];
+        let last = *centers.last()?;
+        let dx = last.x - first.x;
+        let dy = last.y - first.y;
+        let length = (dx * dx + dy * dy).sqrt();
+        if length <= f32::EPSILON {
+            return eraser_cutout(&centers[..1], radius);
+        }
+        let normal_x = -dy / length;
+        let normal_y = dx / length;
+        let angle = normal_y.atan2(normal_x);
+        let mut points = vec![DocumentPoint::new(
+            first.x + normal_x * radius,
+            first.y + normal_y * radius,
+        )];
+        points.push(DocumentPoint::new(
+            last.x + normal_x * radius,
+            last.y + normal_y * radius,
+        ));
+        for index in 1..=12 {
+            let cap_angle = angle - std::f32::consts::PI * index as f32 / 12.0;
+            points.push(DocumentPoint::new(
+                last.x + cap_angle.cos() * radius,
+                last.y + cap_angle.sin() * radius,
+            ));
+        }
+        points.push(DocumentPoint::new(
+            first.x - normal_x * radius,
+            first.y - normal_y * radius,
+        ));
+        for index in 1..12 {
+            let cap_angle =
+                angle + std::f32::consts::PI - std::f32::consts::PI * index as f32 / 12.0;
+            points.push(DocumentPoint::new(
+                first.x + cap_angle.cos() * radius,
+                first.y + cap_angle.sin() * radius,
+            ));
+        }
+        points
+    };
+    let count = points.len();
+    let nodes = points
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            let previous = points[(index + count - 1) % count];
+            let next = points[(index + 1) % count];
+            let dx = next.x - previous.x;
+            let dy = next.y - previous.y;
+            let tangent_length = (dx * dx + dy * dy).sqrt().max(f32::EPSILON);
+            let tangent_x = dx / tangent_length;
+            let tangent_y = dy / tangent_length;
+            let incoming = point_distance(previous, *position) / 3.0;
+            let outgoing = point_distance(*position, next) / 3.0;
+            BezierNode {
+                position: *position,
+                handle_in: DocumentPoint::new(
+                    position.x - tangent_x * incoming,
+                    position.y - tangent_y * incoming,
+                ),
+                handle_out: DocumentPoint::new(
+                    position.x + tangent_x * outgoing,
+                    position.y + tangent_y * outgoing,
+                ),
+                kind: NodeKind::Smooth,
+                width: 1.0,
+            }
+        })
+        .collect();
+    let mut path = BezierPath::from_nodes(nodes)?;
+    path.close();
+    Some(path)
+}
+
 fn kept_intervals(
     curve: Cubic,
     centers: &[DocumentPoint],
