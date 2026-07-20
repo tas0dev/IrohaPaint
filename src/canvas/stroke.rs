@@ -144,12 +144,19 @@ fn closed_spline(points: Vec<DocumentPoint>) -> Option<BezierPath> {
         .map(|(index, position)| {
             let previous = points[(index + count - 1) % count];
             let next = points[(index + 1) % count];
-            let tangent =
-                DocumentPoint::new((next.x - previous.x) / 6.0, (next.y - previous.y) / 6.0);
+            let tangent = unit_tangent(previous, next);
+            let incoming = distance(previous, *position) / 3.0;
+            let outgoing = distance(*position, next) / 3.0;
             BezierNode {
                 position: *position,
-                handle_in: DocumentPoint::new(position.x - tangent.x, position.y - tangent.y),
-                handle_out: DocumentPoint::new(position.x + tangent.x, position.y + tangent.y),
+                handle_in: DocumentPoint::new(
+                    position.x - tangent.x * incoming,
+                    position.y - tangent.y * incoming,
+                ),
+                handle_out: DocumentPoint::new(
+                    position.x + tangent.x * outgoing,
+                    position.y + tangent.y * outgoing,
+                ),
                 kind: NodeKind::Smooth,
                 width: 1.0,
             }
@@ -193,13 +200,18 @@ fn nearest_width(point: DocumentPoint, samples: &[DocumentPoint], widths: &[f32]
 }
 
 fn unit_normal(first: DocumentPoint, second: DocumentPoint) -> DocumentPoint {
+    let tangent = unit_tangent(first, second);
+    DocumentPoint::new(-tangent.y, tangent.x)
+}
+
+fn unit_tangent(first: DocumentPoint, second: DocumentPoint) -> DocumentPoint {
     let delta_x = second.x - first.x;
     let delta_y = second.y - first.y;
     let length = (delta_x * delta_x + delta_y * delta_y).sqrt();
     if length <= f32::EPSILON {
-        DocumentPoint::new(0.0, 1.0)
+        DocumentPoint::new(1.0, 0.0)
     } else {
-        DocumentPoint::new(-delta_y / length, delta_x / length)
+        DocumentPoint::new(delta_x / length, delta_y / length)
     }
 }
 

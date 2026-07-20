@@ -272,12 +272,19 @@ fn closed_spline(points: Vec<DocumentPoint>) -> Option<BezierPath> {
         .map(|(index, position)| {
             let previous = points[(index + count - 1) % count];
             let next = points[(index + 1) % count];
-            let tangent =
-                DocumentPoint::new((next.x - previous.x) / 6.0, (next.y - previous.y) / 6.0);
+            let tangent = unit_tangent(previous, next);
+            let incoming = distance(previous, *position) / 3.0;
+            let outgoing = distance(*position, next) / 3.0;
             BezierNode {
                 position: *position,
-                handle_in: DocumentPoint::new(position.x - tangent.x, position.y - tangent.y),
-                handle_out: DocumentPoint::new(position.x + tangent.x, position.y + tangent.y),
+                handle_in: DocumentPoint::new(
+                    position.x - tangent.x * incoming,
+                    position.y - tangent.y * incoming,
+                ),
+                handle_out: DocumentPoint::new(
+                    position.x + tangent.x * outgoing,
+                    position.y + tangent.y * outgoing,
+                ),
                 kind: NodeKind::Smooth,
                 width: 1.0,
             }
