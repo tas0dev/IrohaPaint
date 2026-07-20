@@ -10,6 +10,40 @@ pub struct DocumentSettingsBindings {
     pub background: State<String>,
 }
 
+pub fn layer_name_settings(
+    document: State<Document>,
+    name: State<String>,
+    modal: ModalState,
+) -> impl View + 'static {
+    Card::new().content(
+        Padding::all(16.0).content(
+            VStack::new()
+                .alignment(StackAlignment::Stretch)
+                .gap(StackGap::Medium)
+                .child(Text::new("Rename Layer").weight(700))
+                .child(Divider::new())
+                .child(TextField::new(name.binding()).placeholder("Layer Name"))
+                .child(
+                    HStack::new()
+                        .gap(StackGap::Small)
+                        .child(Button::new("Rename").style(ButtonStyle::Primary).on_click({
+                            let document = document.clone();
+                            let name = name.clone();
+                            let modal = modal.clone();
+                            move || {
+                                if document
+                                    .update(|document| document.rename_selected_layer(&name.get()))
+                                {
+                                    modal.close();
+                                }
+                            }
+                        }))
+                        .child(Button::new("Cancel").on_click(move || modal.close())),
+                ),
+        ),
+    )
+}
+
 pub fn document_settings(
     document: State<Document>,
     bindings: DocumentSettingsBindings,

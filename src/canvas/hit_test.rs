@@ -5,11 +5,11 @@ use crate::document::{
 use super::interaction::ResizeHandle;
 
 pub fn object_at(document: &Document, point: DocumentPoint, tolerance: f32) -> Option<ObjectId> {
-    document
-        .layers()
+    let layer = document.layers().get(document.selected_layer()?)?;
+    layer
+        .objects()
         .iter()
         .rev()
-        .flat_map(|layer| layer.objects().iter().rev())
         .find(|object| kind_contains(object.kind(), point, tolerance))
         .map(|object| object.id())
 }

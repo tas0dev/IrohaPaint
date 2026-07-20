@@ -495,12 +495,64 @@ impl Document {
         }
     }
 
+    pub fn add_layer(&mut self) -> usize {
+        self.record_change();
+        let mut number = self.layers.len() + 1;
+        let name = loop {
+            let candidate = format!("Layer {number}");
+            if self.layers.iter().all(|layer| layer.name != candidate) {
+                break candidate;
+            }
+            number += 1;
+        };
+        self.layers.push(Layer::new(name));
+        let index = self.layers.len() - 1;
+        self.selected_layer = Some(index);
+        self.selected_object = None;
+        index
+    }
+
+    pub fn rename_selected_layer(&mut self, name: &str) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        let name = name.trim();
+        if name.is_empty() || self.layers[index].name == name {
+            return false;
+        }
+        self.record_change();
+        self.layers[index].name = name.to_owned();
+        true
+    }
+
+    pub fn delete_selected_layer(&mut self) -> bool {
+        if self.layers.len() <= 1 {
+            return false;
+        }
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        self.record_change();
+        self.layers.remove(index);
+        self.selected_layer = Some(index.min(self.layers.len() - 1));
+        self.selected_object = None;
+        true
+    }
+
     pub fn selected_object(&self) -> Option<ObjectId> {
         self.selected_object
     }
 
     pub fn select_object(&mut self, id: Option<ObjectId>) {
-        self.selected_object = id.filter(|id| self.object(*id).is_some());
+        let selected_layer = self.selected_layer;
+        self.selected_object = id.filter(|id| {
+            selected_layer.is_some_and(|layer_index| {
+                self.layers[layer_index]
+                    .objects
+                    .iter()
+                    .any(|object| object.id == *id)
+            })
+        });
     }
 
     pub fn begin_paint_stroke(&mut self, dabs: &[PaintDab]) {

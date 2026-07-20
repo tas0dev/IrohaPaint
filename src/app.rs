@@ -15,12 +15,14 @@ pub struct IrohaPaint {
     pen_menu: PopupMenuState,
     document_settings: ModalState,
     brush_settings: ModalState,
+    layer_name_settings: ModalState,
     brushes: State<BrushLibrary>,
     canvas_width: State<String>,
     canvas_height: State<String>,
     background_hex: State<String>,
     brush_name: State<String>,
     brush_status: State<String>,
+    layer_name: State<String>,
     stroke_color: State<Color>,
     fill_color: State<Color>,
     color_target: State<usize>,
@@ -46,12 +48,14 @@ impl App for IrohaPaint {
             pen_menu: PopupMenuState::new(),
             document_settings: ModalState::new(),
             brush_settings: ModalState::new(),
+            layer_name_settings: ModalState::new(),
             brushes: State::new(BrushLibrary::default()),
             canvas_width: State::new(String::from("1200")),
             canvas_height: State::new(String::from("1200")),
             background_hex: State::new(String::from("#00000000")),
             brush_name: State::new(String::from("Custom Brush")),
             brush_status: State::new(String::new()),
+            layer_name: State::new(String::new()),
             stroke_color: State::new(Color::BLACK),
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
@@ -124,6 +128,8 @@ impl App for IrohaPaint {
                             paint_softness: self.paint_softness.clone(),
                             smoothing: self.smoothing.clone(),
                             inspected_object: self.inspected_object.clone(),
+                            layer_name: self.layer_name.clone(),
+                            layer_name_settings: self.layer_name_settings.clone(),
                         },
                     ))
                     .layout()
@@ -160,11 +166,17 @@ impl App for IrohaPaint {
             self.blob_width.clone(),
             self.brush_settings.clone(),
         );
+        let layer_name_settings = settings_dialog::layer_name_settings(
+            self.document.clone(),
+            self.layer_name.clone(),
+            self.layer_name_settings.clone(),
+        );
         let content = ModalHost::new(content, document_settings, self.document_settings.clone());
+        let content = ModalHost::new(content, brush_settings, self.brush_settings.clone());
         Box::new(ModalHost::new(
             content,
-            brush_settings,
-            self.brush_settings.clone(),
+            layer_name_settings,
+            self.layer_name_settings.clone(),
         ))
     }
 }

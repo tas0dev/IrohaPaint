@@ -16,6 +16,8 @@ pub struct InspectorBindings {
     pub paint_softness: State<f32>,
     pub smoothing: State<f32>,
     pub inspected_object: State<Option<ObjectId>>,
+    pub layer_name: State<String>,
+    pub layer_name_settings: ModalState,
 }
 
 pub fn view(
@@ -51,6 +53,9 @@ pub fn view(
         }
     }
     let selected_layer = current_document.selected_layer();
+    let selected_layer_name = selected_layer
+        .and_then(|index| current_document.layers().get(index))
+        .map(|layer| layer.name().to_owned());
     let layer_rows = current_document
         .layers()
         .iter()
@@ -60,7 +65,15 @@ pub fn view(
                 .selected(selected_layer == Some(index))
                 .on_select({
                     let document = document.clone();
-                    move || document.update(|document| document.select_layer(index))
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(|document| document.select_layer(index));
+                        let mut canvas = canvas.get_mut();
+                        canvas.active_pen_path = None;
+                        canvas.selected_nodes.clear();
+                        canvas.hovered_node = None;
+                        canvas.hovered_segment = None;
+                    }
                 })
         })
         .collect::<Vec<_>>();
@@ -77,6 +90,54 @@ pub fn view(
         .child(Text::new("Layers").weight(700))
         .child(Divider::new())
         .children(layer_rows)
+        .child(
+            HStack::new()
+                .gap(StackGap::Small)
+                .child(Button::new("Add Layer").on_click({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(Document::add_layer);
+                        let mut canvas = canvas.get_mut();
+                        canvas.active_pen_path = None;
+                        canvas.selected_nodes.clear();
+                        canvas.hovered_node = None;
+                        canvas.hovered_segment = None;
+                    }
+                }))
+                .child(
+                    Button::new("Rename")
+                        .enabled(selected_layer_name.is_some())
+                        .on_click({
+                            let name = bindings.layer_name.clone();
+                            let modal = bindings.layer_name_settings.clone();
+                            move || {
+                                if let Some(selected_layer_name) = selected_layer_name.as_ref() {
+                                    name.set(selected_layer_name.clone());
+                                    modal.open();
+                                }
+                            }
+                        }),
+                )
+                .child(
+                    Button::new("Delete")
+                        .style(ButtonStyle::Danger)
+                        .enabled(current_document.layers().len() > 1)
+                        .on_click({
+                            let document = document.clone();
+                            let canvas = canvas.clone();
+                            move || {
+                                if document.update(Document::delete_selected_layer) {
+                                    let mut canvas = canvas.get_mut();
+                                    canvas.active_pen_path = None;
+                                    canvas.selected_nodes.clear();
+                                    canvas.hovered_node = None;
+                                    canvas.hovered_segment = None;
+                                }
+                            }
+                        }),
+                ),
+        )
         .child(
             Text::new(if painting_blob || painting_raster {
                 "Paint"
