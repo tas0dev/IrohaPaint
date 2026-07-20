@@ -1,0 +1,14 @@
+version=1
+name=Clean Inking
+tip=ellipse
+tip_roundness=0.82
+tip_angle=-45
+width=2.5
+minimum_width=0.2
+smoothing=0.72
+streamline=0.5
+taper_start=0.35
+taper_end=0.35
+color=#000000FF
+cap=round
+join=round

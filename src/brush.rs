@@ -1,4 +1,40 @@
+use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::document::{DocumentColor, StrokeCap, StrokeJoin, StrokeStyle};
+
+const BRUSH_DIRECTORY: &str = "resources/brushes";
+const BRUSH_EXTENSION: &str = "irohabrush";
+
+#[derive(Debug)]
+pub enum BrushFileError {
+    Io(std::io::Error),
+    Invalid { path: PathBuf, message: String },
+    NoBrushes(PathBuf),
+}
+
+impl fmt::Display for BrushFileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "{error}"),
+            Self::Invalid { path, message } => {
+                write!(formatter, "{}: {message}", path.display())
+            }
+            Self::NoBrushes(path) => {
+                write!(formatter, "No brush files found in {}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for BrushFileError {}
+
+impl From<std::io::Error> for BrushFileError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BrushTip {
@@ -67,27 +103,40 @@ impl BrushLibrary {
         sanitize(&mut self.presets[self.active]);
     }
 
-    pub fn duplicate_active(&mut self) {
-        let mut preset = self.active().clone();
-        preset.name = format!("{} Copy", preset.name);
-        self.presets.push(preset);
-        self.active = self.presets.len() - 1;
-    }
-
-    pub fn save_active_as(&mut self, name: &str) {
+    pub fn save_active_as_file(&mut self, name: &str) -> Result<PathBuf, BrushFileError> {
         let name = name.trim();
         if name.is_empty() {
-            return;
+            return Err(BrushFileError::Invalid {
+                path: brush_directory(),
+                message: String::from("Brush name is empty"),
+            });
         }
-        let mut preset = self.active().clone();
-        preset.name = name.to_owned();
-        self.presets.push(preset);
+        let mut brush = self.active().clone();
+        brush.name = name.to_owned();
+        sanitize(&mut brush);
+
+        let directory = brush_directory();
+        fs::create_dir_all(&directory)?;
+        let path = unique_brush_path(&directory, name);
+        fs::write(&path, serialize_brush(&brush))?;
+        self.presets.push(brush);
         self.active = self.presets.len() - 1;
+        Ok(path)
+    }
+
+    pub fn reload_from_disk(&mut self) -> Result<(), BrushFileError> {
+        let loaded = load_brushes(&brush_directory())?;
+        self.presets = loaded;
+        self.active = 0;
+        Ok(())
     }
 }
 
 impl Default for BrushLibrary {
     fn default() -> Self {
+        if let Ok(presets) = load_brushes(&brush_directory()) {
+            return Self { presets, active: 0 };
+        }
         Self {
             presets: vec![
                 BrushDefinition {
@@ -102,6 +151,181 @@ impl Default for BrushLibrary {
             ],
             active: 0,
         }
+    }
+}
+
+fn brush_directory() -> PathBuf {
+    PathBuf::from(BRUSH_DIRECTORY)
+}
+
+fn load_brushes(directory: &Path) -> Result<Vec<BrushDefinition>, BrushFileError> {
+    let mut paths = fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case(BRUSH_EXTENSION))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut brushes = Vec::with_capacity(paths.len());
+    for path in paths {
+        let source = fs::read_to_string(&path)?;
+        brushes.push(parse_brush(&path, &source)?);
+    }
+    if brushes.is_empty() {
+        return Err(BrushFileError::NoBrushes(directory.to_owned()));
+    }
+    Ok(brushes)
+}
+
+fn parse_brush(path: &Path, source: &str) -> Result<BrushDefinition, BrushFileError> {
+    let value = |key: &str| {
+        source.lines().find_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (candidate, value) = line.split_once('=')?;
+            (candidate.trim() == key).then(|| value.trim())
+        })
+    };
+    let required = |key: &str| {
+        value(key).ok_or_else(|| BrushFileError::Invalid {
+            path: path.to_owned(),
+            message: format!("Missing {key}"),
+        })
+    };
+    let number = |key: &str| -> Result<f32, BrushFileError> {
+        required(key)?
+            .parse::<f32>()
+            .map_err(|_| BrushFileError::Invalid {
+                path: path.to_owned(),
+                message: format!("Invalid {key}"),
+            })
+    };
+    if required("version")? != "1" {
+        return Err(BrushFileError::Invalid {
+            path: path.to_owned(),
+            message: String::from("Unsupported version"),
+        });
+    }
+    let tip = match required("tip")? {
+        "round" => BrushTip::Round,
+        "ellipse" => BrushTip::Ellipse {
+            roundness: number("tip_roundness")?,
+            angle: number("tip_angle")?,
+        },
+        _ => return invalid_value(path, "tip"),
+    };
+    let cap = match required("cap")? {
+        "butt" => StrokeCap::Butt,
+        "round" => StrokeCap::Round,
+        "square" => StrokeCap::Square,
+        _ => return invalid_value(path, "cap"),
+    };
+    let join = match required("join")? {
+        "miter" => StrokeJoin::Miter,
+        "round" => StrokeJoin::Round,
+        "bevel" => StrokeJoin::Bevel,
+        _ => return invalid_value(path, "join"),
+    };
+    let mut brush = BrushDefinition {
+        name: required("name")?.to_owned(),
+        tip,
+        width: number("width")?,
+        minimum_width: number("minimum_width")?,
+        smoothing: number("smoothing")?,
+        streamline: number("streamline")?,
+        taper_start: number("taper_start")?,
+        taper_end: number("taper_end")?,
+        color: DocumentColor::from_hex(required("color")?).ok_or_else(|| {
+            BrushFileError::Invalid {
+                path: path.to_owned(),
+                message: String::from("Invalid color"),
+            }
+        })?,
+        cap,
+        join,
+    };
+    sanitize(&mut brush);
+    Ok(brush)
+}
+
+fn invalid_value<T>(path: &Path, key: &str) -> Result<T, BrushFileError> {
+    Err(BrushFileError::Invalid {
+        path: path.to_owned(),
+        message: format!("Invalid {key}"),
+    })
+}
+
+fn serialize_brush(brush: &BrushDefinition) -> String {
+    let (tip, roundness, angle) = match brush.tip {
+        BrushTip::Round => ("round", 1.0, 0.0),
+        BrushTip::Ellipse { roundness, angle } => ("ellipse", roundness, angle),
+    };
+    format!(
+        "version=1\nname={}\ntip={}\ntip_roundness={}\ntip_angle={}\nwidth={}\nminimum_width={}\nsmoothing={}\nstreamline={}\ntaper_start={}\ntaper_end={}\ncolor={}\ncap={}\njoin={}\n",
+        brush.name.replace(['\r', '\n'], " "),
+        tip,
+        roundness,
+        angle,
+        brush.width,
+        brush.minimum_width,
+        brush.smoothing,
+        brush.streamline,
+        brush.taper_start,
+        brush.taper_end,
+        brush.color.to_hex(),
+        cap_name(brush.cap),
+        join_name(brush.join),
+    )
+}
+
+fn unique_brush_path(directory: &Path, name: &str) -> PathBuf {
+    let stem = sanitize_file_name(name);
+    let mut path = directory.join(format!("{stem}.{BRUSH_EXTENSION}"));
+    let mut suffix = 2;
+    while path.exists() {
+        path = directory.join(format!("{stem}-{suffix}.{BRUSH_EXTENSION}"));
+        suffix += 1;
+    }
+    path
+}
+
+fn sanitize_file_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.trim_matches('-');
+    if sanitized.is_empty() {
+        String::from("brush")
+    } else {
+        sanitized.to_owned()
+    }
+}
+
+fn cap_name(cap: StrokeCap) -> &'static str {
+    match cap {
+        StrokeCap::Butt => "butt",
+        StrokeCap::Round => "round",
+        StrokeCap::Square => "square",
+    }
+}
+
+fn join_name(join: StrokeJoin) -> &'static str {
+    match join {
+        StrokeJoin::Miter => "miter",
+        StrokeJoin::Round => "round",
+        StrokeJoin::Bevel => "bevel",
     }
 }
 

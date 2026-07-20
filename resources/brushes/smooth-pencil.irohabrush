@@ -1,0 +1,14 @@
+version=1
+name=Smooth Pencil
+tip=round
+tip_roundness=1
+tip_angle=0
+width=1.8
+minimum_width=0.2
+smoothing=0.9
+streamline=0.5
+taper_start=0.15
+taper_end=0.15
+color=#000000FF
+cap=round
+join=round

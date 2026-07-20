@@ -1,5 +1,8 @@
 use crate::document::{BezierNode, BezierPath, DocumentPoint, NodeKind};
 
+const BLOB_CAP_SEGMENTS: usize = 6;
+const BLOB_DOT_SEGMENTS: usize = 12;
+
 pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<BezierPath> {
     if points.len() < 2 {
         return None;
@@ -50,6 +53,119 @@ pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<Bez
         .collect();
 
     BezierPath::from_nodes(nodes)
+}
+
+pub fn fit_blob_stroke(points: &[DocumentPoint], width: f32, tolerance: f32) -> Option<BezierPath> {
+    let radius = width.max(0.1) / 2.0;
+    if points.len() == 1 {
+        return closed_spline(
+            (0..BLOB_DOT_SEGMENTS)
+                .map(|index| {
+                    let angle = std::f32::consts::TAU * index as f32 / BLOB_DOT_SEGMENTS as f32;
+                    DocumentPoint::new(
+                        points[0].x + angle.cos() * radius,
+                        points[0].y + angle.sin() * radius,
+                    )
+                })
+                .collect(),
+        );
+    }
+    if points.len() < 2 {
+        return None;
+    }
+
+    let tolerance = tolerance.max(0.01);
+    let smoothed = smooth_points(points);
+    let sampled = resample_points(&smoothed, tolerance * 0.5);
+    let centers = simplify_points(&sampled, tolerance);
+    if centers.len() < 2 {
+        return None;
+    }
+
+    let normals = (0..centers.len())
+        .map(|index| {
+            let previous = centers[index.saturating_sub(1)];
+            let next = centers[(index + 1).min(centers.len() - 1)];
+            unit_normal(previous, next)
+        })
+        .collect::<Vec<_>>();
+    let left = centers
+        .iter()
+        .zip(&normals)
+        .map(|(point, normal)| {
+            DocumentPoint::new(point.x + normal.x * radius, point.y + normal.y * radius)
+        })
+        .collect::<Vec<_>>();
+    let right = centers
+        .iter()
+        .zip(&normals)
+        .map(|(point, normal)| {
+            DocumentPoint::new(point.x - normal.x * radius, point.y - normal.y * radius)
+        })
+        .collect::<Vec<_>>();
+
+    let mut outline = left;
+    let end = *centers.last()?;
+    let end_normal = *normals.last()?;
+    let end_angle = end_normal.y.atan2(end_normal.x);
+    for index in 1..=BLOB_CAP_SEGMENTS {
+        let angle = end_angle - std::f32::consts::PI * index as f32 / BLOB_CAP_SEGMENTS as f32;
+        outline.push(DocumentPoint::new(
+            end.x + angle.cos() * radius,
+            end.y + angle.sin() * radius,
+        ));
+    }
+    outline.extend(right.iter().rev().skip(1).copied());
+
+    let start = centers[0];
+    let start_normal = normals[0];
+    let start_angle = (-start_normal.y).atan2(-start_normal.x);
+    for index in 1..BLOB_CAP_SEGMENTS {
+        let angle = start_angle - std::f32::consts::PI * index as f32 / BLOB_CAP_SEGMENTS as f32;
+        outline.push(DocumentPoint::new(
+            start.x + angle.cos() * radius,
+            start.y + angle.sin() * radius,
+        ));
+    }
+
+    closed_spline(outline)
+}
+
+fn closed_spline(points: Vec<DocumentPoint>) -> Option<BezierPath> {
+    if points.len() < 3 {
+        return None;
+    }
+    let count = points.len();
+    let nodes = points
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            let previous = points[(index + count - 1) % count];
+            let next = points[(index + 1) % count];
+            let tangent =
+                DocumentPoint::new((next.x - previous.x) / 6.0, (next.y - previous.y) / 6.0);
+            BezierNode {
+                position: *position,
+                handle_in: DocumentPoint::new(position.x - tangent.x, position.y - tangent.y),
+                handle_out: DocumentPoint::new(position.x + tangent.x, position.y + tangent.y),
+                kind: NodeKind::Smooth,
+            }
+        })
+        .collect();
+    let mut path = BezierPath::from_nodes(nodes)?;
+    path.close();
+    Some(path)
+}
+
+fn unit_normal(first: DocumentPoint, second: DocumentPoint) -> DocumentPoint {
+    let delta_x = second.x - first.x;
+    let delta_y = second.y - first.y;
+    let length = (delta_x * delta_x + delta_y * delta_y).sqrt();
+    if length <= f32::EPSILON {
+        DocumentPoint::new(0.0, 1.0)
+    } else {
+        DocumentPoint::new(-delta_y / length, delta_x / length)
+    }
 }
 
 fn smooth_points(points: &[DocumentPoint]) -> Vec<DocumentPoint> {

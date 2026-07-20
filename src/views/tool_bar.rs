@@ -19,10 +19,10 @@ pub fn view(active_tool: State<EditorTool>, pen_menu: PopupMenuState) -> impl Vi
 
                 move || active_tool.set(tool)
             });
-        if tool == EditorTool::Pencil {
+        if matches!(tool, EditorTool::Pencil | EditorTool::BlobBrush) {
             let active_tool_for_trigger = active_tool.clone();
             PopupMenuTrigger::new(button, pen_menu.clone())
-                .when(move || active_tool_for_trigger.get() == EditorTool::Pencil)
+                .when(move || active_tool_for_trigger.get() == tool)
                 .into_stack_child()
         } else {
             button.into_stack_child()
@@ -83,6 +83,7 @@ fn tool_icon(tool: EditorTool) -> &'static str {
         EditorTool::Select => "mouse-pointer-2",
         EditorTool::NodeEdit => "spline",
         EditorTool::Pencil => "pen-tool",
+        EditorTool::BlobBrush => "brush",
         EditorTool::Pen => "line",
         EditorTool::Rectangle => "square",
         EditorTool::Ellipse => "circle",

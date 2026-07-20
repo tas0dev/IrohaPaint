@@ -10,6 +10,7 @@ pub struct InspectorBindings {
     pub fill_color: State<Color>,
     pub color_target: State<usize>,
     pub brush_width: State<f32>,
+    pub blob_width: State<f32>,
     pub smoothing: State<f32>,
     pub inspected_object: State<Option<ObjectId>>,
 }
@@ -23,6 +24,7 @@ pub fn view(
 ) -> impl View + 'static {
     let current_document = document.get();
     let tool = active_tool.get();
+    let painting_blob = tool == EditorTool::BlobBrush;
     let selected_object = if edits_selection(tool) {
         current_document.selected_object()
     } else {
@@ -58,7 +60,7 @@ pub fn view(
                 })
         })
         .collect::<Vec<_>>();
-    let editing_fill = bindings.color_target.get() == 1;
+    let editing_fill = !painting_blob && bindings.color_target.get() == 1;
     let selected_color = if editing_fill {
         bindings.fill_color.get()
     } else {
@@ -71,14 +73,17 @@ pub fn view(
         .child(Text::new("Layers").weight(700))
         .child(Divider::new())
         .children(layer_rows)
-        .child(Text::new("Appearance").weight(700))
-        .child(Divider::new())
-        .child(
+        .child(Text::new(if painting_blob { "Paint" } else { "Appearance" }).weight(700))
+        .child(Divider::new());
+
+    if !painting_blob {
+        content = content.child(
             SegmentedControl::new(bindings.color_target.binding())
                 .item(0, "Stroke")
                 .item(1, "Fill"),
-        )
-        .child(Text::new(color_label(selected_color)));
+        );
+    }
+    content = content.child(Text::new(color_label(selected_color)));
 
     content = if editing_fill {
         content
@@ -125,9 +130,17 @@ pub fn view(
             )
             .child(Text::new(format!(
                 "Size — {:.1} px",
-                bindings.brush_width.get()
+                if painting_blob {
+                    bindings.blob_width.get()
+                } else {
+                    bindings.brush_width.get()
+                }
             )))
-            .child(
+            .child(if painting_blob {
+                Slider::new(bindings.blob_width.binding())
+                    .range(1.0..=200.0)
+                    .step(1.0)
+            } else {
                 Slider::new(bindings.brush_width.binding())
                     .range(0.5..=32.0)
                     .step(0.5)
@@ -144,11 +157,11 @@ pub fn view(
                                     .update(|document| document.set_selected_stroke_width(width));
                             }
                         }
-                    }),
-            )
+                    })
+            })
     };
 
-    if tool == EditorTool::Pencil {
+    if matches!(tool, EditorTool::Pencil | EditorTool::BlobBrush) {
         content = content
             .child(Text::new(format!(
                 "Stabilizer — {:.0}%",

@@ -16,7 +16,7 @@ use super::hit_test::{
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::{NodePresentation, paint_editor_canvas};
 use super::state::CanvasController;
-use super::stroke::fit_pencil_stroke;
+use super::stroke::{fit_blob_stroke, fit_pencil_stroke};
 
 const HIT_TOLERANCE: f32 = 6.0;
 const MIN_DRAG_SIZE: f32 = 2.0;
@@ -27,6 +27,7 @@ pub struct EditorCanvas {
     controller: CanvasController,
     brushes: State<BrushLibrary>,
     fill_color: State<Color>,
+    blob_width: State<f32>,
 }
 
 impl EditorCanvas {
@@ -36,6 +37,7 @@ impl EditorCanvas {
         controller: CanvasController,
         brushes: State<BrushLibrary>,
         fill_color: State<Color>,
+        blob_width: State<f32>,
     ) -> Self {
         Self {
             document,
@@ -43,6 +45,7 @@ impl EditorCanvas {
             controller,
             brushes,
             fill_color,
+            blob_width,
         }
     }
 
@@ -230,6 +233,25 @@ impl EditorCanvas {
                     brush: self.brushes.get().active().clone(),
                 };
             }
+            EditorTool::BlobBrush => {
+                if !inside_drawing_bounds {
+                    return;
+                }
+                let brush = self.brushes.get().active().clone();
+                let width = self.blob_width.get();
+                let style = blob_style(brush.color);
+                self.controller.get_mut().interaction = Interaction::DrawingBlob {
+                    raw_points: vec![document_point],
+                    preview: fit_blob_stroke(
+                        &[document_point],
+                        width,
+                        brush.fitting_tolerance(transform.zoom()),
+                    ),
+                    style,
+                    width,
+                    smoothing: brush.smoothing,
+                };
+            }
             EditorTool::Pen => {
                 if !inside_drawing_bounds {
                     return;
@@ -341,6 +363,29 @@ impl EditorCanvas {
                 }
                 true
             }
+            Interaction::DrawingBlob {
+                raw_points,
+                preview,
+                width,
+                smoothing,
+                ..
+            } => {
+                if !inside_drawing_bounds {
+                    return false;
+                }
+                let should_add = raw_points.last().is_none_or(|last| {
+                    let delta_x = (document_point.x - last.x) * transform.zoom();
+                    let delta_y = (document_point.y - last.y) * transform.zoom();
+                    delta_x * delta_x + delta_y * delta_y >= 0.75 * 0.75
+                });
+                if should_add {
+                    raw_points.push(document_point);
+                    let tolerance =
+                        (0.55 + smoothing.clamp(0.0, 1.0) * 1.75) / transform.zoom().max(0.01);
+                    *preview = fit_blob_stroke(raw_points, *width, tolerance);
+                }
+                true
+            }
             Interaction::PlacingPathNode { handle_out, .. } => {
                 *handle_out = constrained_point;
                 true
@@ -388,6 +433,17 @@ impl EditorCanvas {
             } => {
                 self.document
                     .update(|document| document.add_fitted_path(path, brush.stroke_style()));
+                let mut state = self.controller.get_mut();
+                state.selected_nodes.clear();
+                state.active_pen_path = None;
+            }
+            Interaction::DrawingBlob {
+                preview: Some(path),
+                style,
+                ..
+            } => {
+                self.document
+                    .update(|document| document.add_styled_path(path, style));
                 let mut state = self.controller.get_mut();
                 state.selected_nodes.clear();
                 state.active_pen_path = None;
@@ -759,7 +815,10 @@ impl View for EditorCanvas {
                     let mut state = self.controller.get_mut();
                     state.space_pressed = *key_state == ButtonState::Pressed;
                     if *key_state == ButtonState::Pressed
-                        && matches!(state.interaction, Interaction::DrawingPencil { .. })
+                        && matches!(
+                            state.interaction,
+                            Interaction::DrawingPencil { .. } | Interaction::DrawingBlob { .. }
+                        )
                     {
                         state.interaction = Interaction::Idle;
                     }
@@ -825,6 +884,17 @@ fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {
 
 fn document_color(color: Color) -> DocumentColor {
     DocumentColor::rgba(color.red, color.green, color.blue, color.alpha)
+}
+
+fn blob_style(color: DocumentColor) -> ObjectStyle {
+    ObjectStyle {
+        stroke: crate::document::StrokeStyle {
+            width: 0.1,
+            color: DocumentColor::TRANSPARENT,
+            ..crate::document::StrokeStyle::default()
+        },
+        fill: color,
+    }
 }
 
 fn path_node_position(kind: &ObjectKind, index: usize) -> Option<DocumentPoint> {

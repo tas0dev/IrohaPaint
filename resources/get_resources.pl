@@ -27,6 +27,7 @@ my @icons = (
 	'save',
 	'file-input',
 	'file-output',
+	'brush',
 );
 
 make_path($output_dir);

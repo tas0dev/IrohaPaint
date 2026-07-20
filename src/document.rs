@@ -531,13 +531,17 @@ impl Document {
     }
 
     pub fn add_fitted_path(&mut self, path: BezierPath, stroke: StrokeStyle) -> ObjectId {
-        self.add_object(ObjectKind::Path {
+        self.add_styled_path(
             path,
-            style: ObjectStyle {
+            ObjectStyle {
                 stroke,
                 ..ObjectStyle::default()
             },
-        })
+        )
+    }
+
+    pub fn add_styled_path(&mut self, path: BezierPath, style: ObjectStyle) -> ObjectId {
+        self.add_object(ObjectKind::Path { path, style })
     }
 
     pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {

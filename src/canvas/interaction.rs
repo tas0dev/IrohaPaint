@@ -64,6 +64,13 @@ pub enum Interaction {
         preview: Option<BezierPath>,
         brush: BrushDefinition,
     },
+    DrawingBlob {
+        raw_points: Vec<DocumentPoint>,
+        preview: Option<BezierPath>,
+        style: ObjectStyle,
+        width: f32,
+        smoothing: f32,
+    },
     PlacingPathNode {
         path_id: Option<ObjectId>,
         original: Option<ObjectKind>,

@@ -20,10 +20,12 @@ pub struct IrohaPaint {
     canvas_height: State<String>,
     background_hex: State<String>,
     brush_name: State<String>,
+    brush_status: State<String>,
     stroke_color: State<Color>,
     fill_color: State<Color>,
     color_target: State<usize>,
     brush_width: State<f32>,
+    blob_width: State<f32>,
     smoothing: State<f32>,
     inspected_object: State<Option<ObjectId>>,
 }
@@ -46,10 +48,12 @@ impl App for IrohaPaint {
             canvas_height: State::new(String::from("1200")),
             background_hex: State::new(String::from("#00000000")),
             brush_name: State::new(String::from("Custom Brush")),
+            brush_status: State::new(String::new()),
             stroke_color: State::new(Color::BLACK),
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
             brush_width: State::new(2.5),
+            blob_width: State::new(40.0),
             smoothing: State::new(0.72),
             inspected_object: State::new(None),
         }
@@ -87,6 +91,7 @@ impl App for IrohaPaint {
                             self.canvas.clone(),
                             self.brushes.clone(),
                             self.fill_color.clone(),
+                            self.blob_width.clone(),
                         )
                         .layout()
                         .flex_grow(1.0),
@@ -102,6 +107,7 @@ impl App for IrohaPaint {
                             fill_color: self.fill_color.clone(),
                             color_target: self.color_target.clone(),
                             brush_width: self.brush_width.clone(),
+                            blob_width: self.blob_width.clone(),
                             smoothing: self.smoothing.clone(),
                             inspected_object: self.inspected_object.clone(),
                         },
@@ -135,6 +141,9 @@ impl App for IrohaPaint {
         let brush_settings = settings_dialog::brush_settings(
             self.brushes.clone(),
             self.brush_name.clone(),
+            self.brush_status.clone(),
+            self.active_tool.clone(),
+            self.blob_width.clone(),
             self.brush_settings.clone(),
         );
         let content = ModalHost::new(content, document_settings, self.document_settings.clone());

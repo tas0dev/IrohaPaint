@@ -174,8 +174,54 @@ fn kind_contains(kind: &ObjectKind, point: DocumentPoint, tolerance: f32) -> boo
         ObjectKind::Ellipse { bounds, .. } => ellipse_contains(*bounds, point, tolerance),
         ObjectKind::Path { path, style } => {
             bezier_path_contains(path, point, tolerance + style.stroke.width / 2.0)
+                || (path.is_closed()
+                    && style.fill.alpha > 0
+                    && style.stroke.color.alpha == 0
+                    && filled_path_contains(path, point))
         }
     }
+}
+
+fn filled_path_contains(path: &BezierPath, point: DocumentPoint) -> bool {
+    const STEPS: usize = 12;
+    let nodes = path.nodes();
+    let Some(first) = nodes.first() else {
+        return false;
+    };
+    let mut outline = vec![first.position];
+    for nodes in nodes.windows(2) {
+        for step in 1..=STEPS {
+            outline.push(cubic_point(
+                nodes[0].position,
+                nodes[0].handle_out,
+                nodes[1].handle_in,
+                nodes[1].position,
+                step as f32 / STEPS as f32,
+            ));
+        }
+    }
+    let last = nodes.last().expect("a filled path has nodes");
+    for step in 1..=STEPS {
+        outline.push(cubic_point(
+            last.position,
+            last.handle_out,
+            first.handle_in,
+            first.position,
+            step as f32 / STEPS as f32,
+        ));
+    }
+
+    let mut inside = false;
+    for edge in outline.windows(2) {
+        let first = edge[0];
+        let second = edge[1];
+        if (first.y > point.y) != (second.y > point.y)
+            && point.x < (second.x - first.x) * (point.y - first.y) / (second.y - first.y) + first.x
+        {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 fn bezier_path_contains(path: &BezierPath, point: DocumentPoint, tolerance: f32) -> bool {

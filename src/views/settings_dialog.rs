@@ -2,6 +2,7 @@ use viewkit::prelude::*;
 
 use crate::brush::{BrushDefinition, BrushLibrary, BrushTip};
 use crate::document::{CanvasSize, Document, DocumentColor};
+use crate::editor::EditorTool;
 
 pub struct DocumentSettingsBindings {
     pub width: State<String>,
@@ -78,6 +79,9 @@ pub fn document_settings(
 pub fn brush_settings(
     brushes: State<BrushLibrary>,
     preset_name: State<String>,
+    status: State<String>,
+    active_tool: State<EditorTool>,
+    blob_width: State<f32>,
     modal: ModalState,
 ) -> impl View + 'static {
     let active = brushes.get().active().clone();
@@ -146,19 +150,44 @@ pub fn brush_settings(
                 .child(Divider::new())
                 .child(Text::new("Preset").weight(700))
                 .child(TextField::new(preset_name.binding()).placeholder("Preset Name"))
+                .child(Text::new(status.get()))
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(Button::new("Save as New Preset").on_click({
+                        .child(Button::new("Save Brush File").on_click({
                             let brushes = brushes.clone();
                             let preset_name = preset_name.clone();
+                            let status = status.clone();
+                            let active_tool = active_tool.clone();
+                            let blob_width = blob_width.clone();
                             move || {
-                                brushes.update(|library| library.save_active_as(&preset_name.get()))
+                                let result = brushes.update(|library| {
+                                    if active_tool.get() == EditorTool::BlobBrush {
+                                        library
+                                            .update_active(|brush| brush.width = blob_width.get());
+                                    }
+                                    library.save_active_as_file(&preset_name.get())
+                                });
+                                match result {
+                                    Ok(path) => status.set(format!("Saved {}", path.display())),
+                                    Err(error) => status.set(format!("Save failed: {error}")),
+                                }
                             }
                         }))
-                        .child(Button::new("Duplicate").on_click({
+                        .child(Button::new("Reload Brushes").on_click({
                             let brushes = brushes.clone();
-                            move || brushes.update(BrushLibrary::duplicate_active)
+                            let status = status.clone();
+                            let active_tool = active_tool.clone();
+                            let blob_width = blob_width.clone();
+                            move || match brushes.update(BrushLibrary::reload_from_disk) {
+                                Ok(()) => {
+                                    if active_tool.get() == EditorTool::BlobBrush {
+                                        blob_width.set(brushes.get().active().width);
+                                    }
+                                    status.set(String::from("Brushes reloaded"));
+                                }
+                                Err(error) => status.set(format!("Reload failed: {error}")),
+                            }
                         })),
                 )
                 .child(Divider::new())

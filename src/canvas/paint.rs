@@ -121,7 +121,7 @@ pub fn paint_editor_canvas(
             {
                 paint_segment_insertion(hit.point, transform, bounds, context);
             }
-        } else if active_tool != EditorTool::Pencil {
+        } else if !matches!(active_tool, EditorTool::Pencil | EditorTool::BlobBrush) {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
     }
@@ -333,6 +333,13 @@ fn paint_draft(
                 canvas_bounds,
                 context,
             );
+        }
+        Interaction::DrawingBlob {
+            preview: Some(path),
+            style,
+            ..
+        } => {
+            paint_svg_path(path, *style, transform, canvas_bounds, context);
         }
         Interaction::PlacingPathNode {
             path_id: None,

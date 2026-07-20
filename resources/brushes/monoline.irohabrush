@@ -1,0 +1,14 @@
+version=1
+name=Monoline
+tip=round
+tip_roundness=1
+tip_angle=0
+width=3
+minimum_width=0.2
+smoothing=0.45
+streamline=0.5
+taper_start=0
+taper_end=0
+color=#000000FF
+cap=round
+join=round
