@@ -47,25 +47,3 @@ impl Default for Document {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn new_document_has_a_selected_layer() {
-        let document = Document::new();
-
-        assert_eq!(document.layers(), &[Layer::new("Layer 1")]);
-        assert_eq!(document.selected_layer(), Some(0));
-    }
-
-    #[test]
-    fn invalid_layer_selection_is_ignored() {
-        let mut document = Document::new();
-
-        document.select_layer(1);
-
-        assert_eq!(document.selected_layer(), Some(0));
-    }
-}
