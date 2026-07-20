@@ -1,5 +1,5 @@
 use viewkit::event::{EventContext, EventResult, ViewEvent};
-use viewkit::platform::PointerButton;
+use viewkit::platform::{ButtonState, KeyCode, PointerButton};
 use viewkit::prelude::{CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
@@ -349,6 +349,16 @@ impl View for EditorCanvas {
     ) -> EventResult {
         match event {
             ViewEvent::PointerPressed { position, button }
+                if bounds.contains(*position)
+                    && *button == PointerButton::Primary
+                    && self.controller.get().space_pressed =>
+            {
+                self.begin_pan(*position);
+                context.request_redraw_in(bounds);
+                self.update_cursor(context);
+                EventResult::Consumed
+            }
+            ViewEvent::PointerPressed { position, button }
                 if bounds.contains(*position) && *button == PointerButton::Primary =>
             {
                 self.handle_primary_press(*position, bounds);
@@ -418,6 +428,48 @@ impl View for EditorCanvas {
                 }
                 context.request_redraw_in(bounds);
                 EventResult::Consumed
+            }
+            ViewEvent::KeyInput {
+                key,
+                state,
+                modifiers,
+                repeat,
+            } => match (key, state) {
+                (KeyCode::Escape, ButtonState::Pressed) => {
+                    let mut state = self.controller.get_mut();
+                    state.interaction = Interaction::Idle;
+                    state.active_pen_path = None;
+                    drop(state);
+                    context.request_redraw_in(bounds);
+                    EventResult::Consumed
+                }
+                (KeyCode::Space, key_state) => {
+                    self.controller.get_mut().space_pressed = *key_state == ButtonState::Pressed;
+                    EventResult::Consumed
+                }
+                (KeyCode::Z, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
+                    if modifiers.shift {
+                        self.document.update(Document::redo);
+                    } else {
+                        self.document.update(Document::undo);
+                    }
+                    context.request_redraw_in(bounds);
+                    EventResult::Consumed
+                }
+                (KeyCode::Y, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
+                    self.document.update(Document::redo);
+                    context.request_redraw_in(bounds);
+                    EventResult::Consumed
+                }
+                _ => EventResult::Ignored,
+            },
+            ViewEvent::FocusChanged { focused: false } => {
+                let mut state = self.controller.get_mut();
+                state.space_pressed = false;
+                if matches!(state.interaction, Interaction::Panning { .. }) {
+                    state.interaction = Interaction::Idle;
+                }
+                EventResult::Ignored
             }
             _ => EventResult::Ignored,
         }

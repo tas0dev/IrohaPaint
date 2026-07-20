@@ -1,0 +1,154 @@
+use crate::draw_command::DisplayList;
+use crate::event::{EventContext, EventResult, ViewEvent};
+use crate::geometry::{Rect, Size};
+use crate::theme::Theme;
+use crate::typography::{TextMeasurer, Typography};
+use std::time::Instant;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Constraints {
+    pub minimum: Size,
+    pub maximum: Size,
+}
+
+impl Constraints {
+    pub fn new(minimum: Size, maximum: Size) -> Self {
+        Self { minimum, maximum }
+    }
+
+    pub fn loose(maximum: Size) -> Self {
+        Self {
+            minimum: Size::new(0.0, 0.0),
+            maximum,
+        }
+    }
+
+    pub fn constrain(self, size: Size) -> Size {
+        let minimum_width = sanitize_constraint_length(self.minimum.width);
+        let minimum_height = sanitize_constraint_length(self.minimum.height);
+        let maximum_width = sanitize_constraint_length(self.maximum.width).max(minimum_width);
+        let maximum_height = sanitize_constraint_length(self.maximum.height).max(minimum_height);
+
+        Size::new(
+            sanitize_constraint_length(size.width).clamp(minimum_width, maximum_width),
+            sanitize_constraint_length(size.height).clamp(minimum_height, maximum_height),
+        )
+    }
+}
+
+fn sanitize_constraint_length(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+pub struct MeasureContext<'a> {
+    pub theme: &'a Theme,
+    pub typography: &'a Typography,
+    pub text_measurer: &'a mut TextMeasurer,
+}
+
+pub struct PaintContext<'a> {
+    pub display_list: &'a mut DisplayList,
+    pub theme: &'a Theme,
+    pub typography: &'a Typography,
+    pub text_measurer: &'a mut TextMeasurer,
+    redraw_schedule: Option<&'a mut RedrawSchedule>,
+    inherited_corner_radii: Vec<f32>,
+}
+
+impl<'a> PaintContext<'a> {
+    pub fn new(
+        display_list: &'a mut DisplayList,
+        theme: &'a Theme,
+        typography: &'a Typography,
+        text_measurer: &'a mut TextMeasurer,
+    ) -> Self {
+        Self {
+            display_list,
+            theme,
+            typography,
+            text_measurer,
+
+            redraw_schedule: None,
+            inherited_corner_radii: Vec::new(),
+        }
+    }
+
+    pub fn with_redraw_schedule(mut self, redraw_schedule: &'a mut RedrawSchedule) -> Self {
+        self.redraw_schedule = Some(redraw_schedule);
+        self
+    }
+
+    pub fn request_redraw_at(&mut self, deadline: Instant) {
+        let Some(schedule) = self.redraw_schedule.as_deref_mut() else {
+            return;
+        };
+
+        schedule.request_at(deadline);
+    }
+
+    pub(crate) fn inherited_corner_radius(&self) -> Option<f32> {
+        self.inherited_corner_radii.last().copied()
+    }
+
+    pub(crate) fn push_corner_radius(&mut self, radius: f32) {
+        self.inherited_corner_radii.push(radius.max(0.0));
+    }
+
+    pub(crate) fn pop_corner_radius(&mut self) {
+        self.inherited_corner_radii.pop();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RedrawSchedule {
+    deadline: Option<Instant>,
+}
+
+impl RedrawSchedule {
+    pub const fn new() -> Self {
+        Self { deadline: None }
+    }
+
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    pub fn request_at(&mut self, deadline: Instant) {
+        match self.deadline {
+            Some(current) if current <= deadline => {}
+
+            _ => {
+                self.deadline = Some(deadline);
+            }
+        }
+    }
+
+    pub fn take(&mut self) -> Option<Instant> {
+        self.deadline.take()
+    }
+
+    pub fn clear(&mut self) {
+        self.deadline = None;
+    }
+}
+
+pub trait View {
+    fn measure(&self, constraints: Constraints, _context: &mut MeasureContext<'_>) -> Size {
+        constraints.constrain(Size::new(0.0, 0.0))
+    }
+
+    fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>);
+
+    fn handle_event(
+        &self,
+        _bounds: Rect,
+        _event: &ViewEvent,
+        _context: &mut EventContext<'_>,
+    ) -> EventResult {
+        EventResult::Ignored
+    }
+}

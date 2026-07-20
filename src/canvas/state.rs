@@ -16,6 +16,7 @@ pub(crate) struct CanvasState {
     pub interaction: Interaction,
     pub active_pen_path: Option<ObjectId>,
     pub selected_node: Option<(ObjectId, usize)>,
+    pub space_pressed: bool,
 }
 
 impl CanvasController {
