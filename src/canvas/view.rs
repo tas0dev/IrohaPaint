@@ -886,6 +886,16 @@ impl EditorCanvas {
 
     fn take_redraw_bounds(&self, canvas_bounds: Rect) -> Rect {
         let mut state = self.controller.get_mut();
+        let document = self.document.get();
+        let selected_layer_is_clipped = document
+            .selected_layer()
+            .and_then(|index| document.layers().get(index))
+            .is_some_and(|layer| layer.is_clipped());
+        drop(document);
+        if selected_layer_is_clipped {
+            state.paint_dirty = None;
+            return canvas_bounds;
+        }
         let Some(mut dirty) = state.paint_dirty.take() else {
             return canvas_bounds;
         };

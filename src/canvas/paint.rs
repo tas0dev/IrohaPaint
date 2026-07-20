@@ -246,23 +246,77 @@ fn paint_clipped_layer(
         canvas_bounds,
     );
     let viewport = DocumentRect::from_points(top_left, bottom_right);
-    let Ok(source) =
-        crate::export::serialize_layer_for_canvas(document, layer_index, viewport, preview, extra)
-    else {
+    let Some(base_index) = document.clip_base_layer(layer_index) else {
         return false;
     };
-    let Ok(svg) = SvgData::decode(source.as_bytes()) else {
+    let layer_source = match crate::export::serialize_layer_content_for_canvas(
+        document,
+        layer_index,
+        viewport,
+        preview,
+        extra,
+    ) {
+        Ok(source) => source,
+        Err(_) => return false,
+    };
+    let base_source = match crate::export::serialize_layer_content_for_canvas(
+        document, base_index, viewport, None, None,
+    ) {
+        Ok(source) => source,
+        Err(_) => return false,
+    };
+
+    // Canvas clipping is composed explicitly from the two layer alpha maps.
+    // This avoids SVG mask/viewBox differences in the platform renderer while
+    // keeping both the document model and exported SVG fully vector.
+    let raster_width = canvas_bounds.size.width.ceil().clamp(1.0, 8192.0) as u32;
+    let raster_height = canvas_bounds.size.height.ceil().clamp(1.0, 8192.0) as u32;
+    let Some(mut pixmap) = rasterize_svg(&layer_source, raster_width, raster_height) else {
         return false;
     };
-    context.display_list.push(DrawCommand::DrawSvg {
-        command: SvgCommand {
-            svg,
+    let Some(base) = rasterize_svg(&base_source, raster_width, raster_height) else {
+        return false;
+    };
+    for (pixel, mask) in pixmap
+        .data_mut()
+        .chunks_exact_mut(4)
+        .zip(base.data().chunks_exact(4))
+    {
+        let alpha = u16::from(mask[3]);
+        for channel in pixel {
+            *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
+        }
+    }
+    let image = match ImageData::from_premultiplied_rgba8(
+        raster_width,
+        raster_height,
+        pixmap.data().to_vec(),
+    ) {
+        Ok(image) => image,
+        Err(_) => return false,
+    };
+    context.display_list.push(DrawCommand::DrawImage {
+        command: ImageCommand {
+            image,
             bounds: canvas_bounds,
             opacity: 1.0,
-            tint: None,
+            sampling: ImageSampling::Bilinear,
         },
     });
     true
+}
+
+fn rasterize_svg(source: &str, width: u32, height: u32) -> Option<tiny_skia::Pixmap> {
+    let tree =
+        resvg::usvg::Tree::from_data(source.as_bytes(), &resvg::usvg::Options::default()).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    let size = tree.size();
+    let transform = tiny_skia::Transform::from_scale(
+        width as f32 / size.width(),
+        height as f32 / size.height(),
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(pixmap)
 }
 
 fn paint_raster_layer(
@@ -633,7 +687,7 @@ fn paint_draft(
             paint_svg_path(path, *style, transform, canvas_bounds, context, &[]);
         }
         Interaction::PlacingPathNode {
-            path_id: None,
+            path_id: _none,
             position,
             handle_out,
             ..

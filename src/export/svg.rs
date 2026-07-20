@@ -104,23 +104,7 @@ pub(crate) fn serialize_layer(
         height = viewport.height.max(0.1),
     );
     let mut mask_id = 1_u64;
-    if let Some(base_index) = document.clip_base_layer(layer_index) {
-        let _ = write!(
-            source,
-            r#"<defs><mask id="canvas-layer-clip" maskUnits="userSpaceOnUse" x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" style="mask-type:luminance">"#,
-            x = viewport.x,
-            y = viewport.y,
-            width = viewport.width.max(0.1),
-            height = viewport.height.max(0.1),
-        );
-        let base = &document.layers()[base_index];
-        if base.is_visible() {
-            write_layer_mask_content(&mut source, base)?;
-        }
-        source.push_str("</mask></defs><g mask=\"url(#canvas-layer-clip)\">");
-    } else {
-        source.push_str("<g>");
-    }
+    source.push_str("<g>");
     write_paint_layer(&mut source, layer.paint())?;
     for object in layer.objects() {
         if preview.is_some_and(|(id, _)| id == object.id()) {

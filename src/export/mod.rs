@@ -82,7 +82,7 @@ pub fn export_with_dialog(document: &Document, format: ExportFormat) -> Result<b
     Ok(true)
 }
 
-pub(crate) fn serialize_layer_for_canvas(
+pub(crate) fn serialize_layer_content_for_canvas(
     document: &Document,
     layer_index: usize,
     viewport: DocumentRect,
