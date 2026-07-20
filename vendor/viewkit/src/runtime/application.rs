@@ -240,6 +240,25 @@ where
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        use crate::platform::macos::MacOsBackend;
+
+        let backend = MacOsBackend::new(
+            runtime,
+            WindowConfig {
+                title: options.title().to_owned(),
+                size: options.initial_size(),
+                resizable: options.is_resizable(),
+                fullscreen: options.is_fullscreen(),
+            },
+        );
+
+        backend.run()?;
+
+        Ok(())
+    }
+
     #[cfg(target_os = "mochios")]
     {
         use crate::platform::mochios::MochiOsBackend;
@@ -259,7 +278,12 @@ where
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "mochios")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "mochios"
+    )))]
     {
         let _ = runtime;
         let _ = options;
@@ -278,6 +302,10 @@ pub enum ViewKitError {
     #[cfg(target_os = "windows")]
     #[error(transparent)]
     Windows(#[from] crate::platform::windows::WindowsBackendError),
+
+    #[cfg(target_os = "macos")]
+    #[error(transparent)]
+    MacOs(#[from] crate::platform::macos::MacOsBackendError),
 
     #[cfg(target_os = "mochios")]
     #[error(transparent)]

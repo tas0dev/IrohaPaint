@@ -9,7 +9,15 @@ pub(crate) const DEFAULT_UI_FONT_FAMILY: &str = env!("VIEWKIT_DEFAULT_UI_FONT_FA
 
 #[cfg(target_os = "windows")]
 pub(crate) fn load_platform_fonts(db: &mut cosmic_text::fontdb::Database) {
-    db.load_system_fonts();
+    db.load_font_data(crate::font::DEFAULT_UI_FONT_BYTES.to_vec());
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) const DEFAULT_UI_FONT_FAMILY: &str = env!("VIEWKIT_DEFAULT_UI_FONT_FAMILY");
+
+#[cfg(target_os = "macos")]
+pub(crate) fn load_platform_fonts(db: &mut cosmic_text::fontdb::Database) {
+    db.load_font_data(crate::font::DEFAULT_UI_FONT_BYTES.to_vec());
 }
 
 #[cfg(target_os = "mochios")]

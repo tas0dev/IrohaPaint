@@ -106,7 +106,7 @@ version = "0.12.0"
 [dependencies.ui_layout]
 version = "0.9.8"
 
-[target.'cfg(target_os = "linux")'.dependencies.softbuffer]
+[target.'cfg(target_os = "mochios")'.dependencies.softbuffer]
 version = "0.4.8"
 features = [
     "wayland",
@@ -114,7 +114,7 @@ features = [
 ]
 default-features = false
 
-[target.'cfg(target_os = "linux")'.dependencies.thiserror]
+[target.'cfg(not(target_os = "mochios"))'.dependencies.thiserror]
 version = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies.winit]
@@ -129,11 +129,16 @@ default-features = false
 [target.'cfg(target_os = "mochios")'.dependencies.mochi-user-syscall]
 version = "0.1.0"
 
-[target.'cfg(target_os = "windows")'.dependencies.softbuffer]
+[target.'cfg(not(target_os = "mochios"))'.dependencies.softbuffer]
 version = "0.4.8"
 default-features = false
 
-[target.'cfg(target_os = "windows")'.dependencies.winit]
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies.winit]
+version = "0.30.13"
+features = ["rwh_06"]
+default-features = false
+
+[target.'cfg(target_os = "macos")'.dependencies.winit]
 version = "0.30.13"
 features = ["rwh_06"]
 default-features = false

@@ -12,15 +12,17 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(target_os, values(\"mochios\"))");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is not set");
+    let host_os = env::consts::OS;
 
-    let candidates = font_candidates(&target_os);
+    // Build scripts run on the host. Embed a font available on that machine,
+    // even when Cargo is checking a different target.
+    let candidates = font_candidates(host_os);
 
     let Some(candidate) = candidates.iter().find(|candidate| candidate.path.exists()) else {
-        panic!("no usable system font found for ViewKit on {target_os}");
+        panic!("no usable system font found for ViewKit: target={target_os}, host={host_os}");
     };
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is not set");
-
     let target_path = Path::new(&out_dir).join("default_ui_font.ttf");
 
     fs::copy(&candidate.path, &target_path).unwrap_or_else(|err| {
@@ -40,6 +42,7 @@ fn font_candidates(target_os: &str) -> Vec<FontCandidate> {
     match target_os {
         "windows" => windows_font_candidates(),
         "linux" => linux_font_candidates(),
+        "macos" => macos_font_candidates(),
         _ => Vec::new(),
     }
 }
@@ -84,6 +87,23 @@ fn linux_font_candidates() -> Vec<FontCandidate> {
         FontCandidate {
             path: PathBuf::from("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
             family: "Liberation Sans",
+        },
+    ]
+}
+
+fn macos_font_candidates() -> Vec<FontCandidate> {
+    vec![
+        FontCandidate {
+            path: PathBuf::from("/System/Library/Fonts/SFNS.ttf"),
+            family: ".AppleSystemUIFont",
+        },
+        FontCandidate {
+            path: PathBuf::from("/System/Library/Fonts/Helvetica.ttc"),
+            family: "Helvetica",
+        },
+        FontCandidate {
+            path: PathBuf::from("/System/Library/Fonts/Supplemental/Arial.ttf"),
+            family: "Arial",
         },
     ]
 }

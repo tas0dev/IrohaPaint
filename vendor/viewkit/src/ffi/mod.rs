@@ -10,6 +10,8 @@ use crate::geometry::{Rect, Size};
 use crate::layout::{LayoutLength, StackAlignment, StackDistribution, StackGap};
 #[cfg(target_os = "linux")]
 use crate::platform::linux::LinuxBackend as NativeBackend;
+#[cfg(target_os = "macos")]
+use crate::platform::macos::MacOsBackend as NativeBackend;
 #[cfg(target_os = "windows")]
 use crate::platform::windows::WindowsBackend as NativeBackend;
 use crate::platform::{PlatformApplication, PlatformEvent, PlatformWindow, WindowConfig};
@@ -1276,7 +1278,7 @@ pub extern "C" fn vk_runtime_run_window(
             return Err(VkStatus::MissingRoot);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         {
             let application = VkWindowApplication::new(runtime);
 
@@ -1295,7 +1297,7 @@ pub extern "C" fn vk_runtime_run_window(
             Ok(())
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         {
             let _ = title;
             let _ = width;

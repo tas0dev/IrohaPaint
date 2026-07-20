@@ -5,7 +5,7 @@ use cosmic_text::FontSystem;
 #[cfg(target_os = "mochios")]
 use cosmic_text::fontdb;
 
-const DEFAULT_UI_FONT_BYTES: &[u8] =
+pub(crate) const DEFAULT_UI_FONT_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/default_ui_font.ttf"));
 
 #[cfg(target_os = "mochios")]
