@@ -37,7 +37,7 @@ pub fn view(active_tool: State<EditorTool>, pen_menu: PopupMenuState) -> impl Vi
     )
 }
 
-pub fn pen_menu(brushes: State<BrushLibrary>) -> Menu {
+pub fn pen_menu(brushes: State<BrushLibrary>, brush_settings: ModalState) -> Menu {
     let library = brushes.get();
     let active = library.active_index();
     let mut menu = Menu::new();
@@ -53,8 +53,8 @@ pub fn pen_menu(brushes: State<BrushLibrary>) -> Menu {
         }));
     }
     menu.separator()
-        .item(MenuItem::new("Duplicate Preset").on_select(move || {
-            brushes.update(BrushLibrary::duplicate_active);
+        .item(MenuItem::new("Edit Brush…").on_select(move || {
+            brush_settings.open();
         }))
 }
 

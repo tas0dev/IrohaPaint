@@ -36,8 +36,16 @@ pub fn view(
     )
 }
 
-pub fn file_menu(document: State<Document>, export_status: State<String>) -> Menu {
+pub fn file_menu(
+    document: State<Document>,
+    export_status: State<String>,
+    document_settings: ModalState,
+) -> Menu {
     Menu::new()
+        .item(MenuItem::new("Document Properties…").on_select(move || {
+            document_settings.open();
+        }))
+        .separator()
         .item(export_item(
             "Export SVG",
             export::ExportFormat::Svg,

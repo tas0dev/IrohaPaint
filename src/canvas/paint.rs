@@ -40,7 +40,7 @@ pub fn paint_editor_canvas(
         .display_list
         .push(DrawCommand::PushClip { rect: bounds });
 
-    if let CanvasSize::Custom { width, height } = document.properties().canvas_size {
+    let artboard = if let CanvasSize::Custom { width, height } = document.properties().canvas_size {
         let artboard = transform.document_rect_to_canvas(
             DocumentRect {
                 x: 0.0,
@@ -59,11 +59,15 @@ pub fn paint_editor_canvas(
                 view_color(background)
             },
         });
-        context.display_list.push(DrawCommand::StrokeRect {
-            rect: artboard,
-            color: context.theme.colors.border,
-            width: 1.0,
-        });
+        Some(artboard)
+    } else {
+        None
+    };
+
+    if let Some(artboard) = artboard {
+        context
+            .display_list
+            .push(DrawCommand::PushClip { rect: artboard });
     }
 
     for layer in document.layers() {
@@ -77,6 +81,18 @@ pub fn paint_editor_canvas(
     }
 
     paint_draft(interaction, transform, bounds, context);
+
+    if artboard.is_some() {
+        context.display_list.push(DrawCommand::PopClip);
+    }
+
+    if let Some(artboard) = artboard {
+        context.display_list.push(DrawCommand::StrokeRect {
+            rect: artboard,
+            color: context.theme.colors.border,
+            width: 1.0,
+        });
+    }
 
     if let Some(selected_id) = document.selected_object()
         && let Some(object) = document.object(selected_id)

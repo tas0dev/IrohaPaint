@@ -4,7 +4,7 @@ use crate::brush::BrushLibrary;
 use crate::canvas::{CanvasController, EditorCanvas};
 use crate::document::Document;
 use crate::editor::EditorTool;
-use crate::views::{inspector, menu_bar, tool_bar};
+use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
 
 pub struct IrohaPaint {
     active_tool: State<EditorTool>,
@@ -13,6 +13,8 @@ pub struct IrohaPaint {
     export_status: State<String>,
     file_menu: PopupMenuState,
     pen_menu: PopupMenuState,
+    document_settings: ModalState,
+    brush_settings: ModalState,
     brushes: State<BrushLibrary>,
     canvas_width: State<String>,
     canvas_height: State<String>,
@@ -32,6 +34,8 @@ impl App for IrohaPaint {
             export_status: State::new(String::new()),
             file_menu: PopupMenuState::new(),
             pen_menu: PopupMenuState::new(),
+            document_settings: ModalState::new(),
+            brush_settings: ModalState::new(),
             brushes: State::new(BrushLibrary::default()),
             canvas_width: State::new(String::from("1200")),
             canvas_height: State::new(String::from("1200")),
@@ -82,19 +86,39 @@ impl App for IrohaPaint {
                         self.canvas.clone(),
                         self.brushes.clone(),
                         inspector::InspectorBindings {
-                            canvas_width: self.canvas_width.clone(),
-                            canvas_height: self.canvas_height.clone(),
-                            background_hex: self.background_hex.clone(),
                             stroke_hex: self.stroke_hex.clone(),
-                            brush_name: self.brush_name.clone(),
                         },
                     ))
                     .layout()
                     .flex_grow(1.0),
             );
-        let menu = menu_bar::file_menu(self.document.clone(), self.export_status.clone());
-        let pen_menu = tool_bar::pen_menu(self.brushes.clone());
+        let menu = menu_bar::file_menu(
+            self.document.clone(),
+            self.export_status.clone(),
+            self.document_settings.clone(),
+        );
+        let pen_menu = tool_bar::pen_menu(self.brushes.clone(), self.brush_settings.clone());
         let content = PopupMenuHost::new(content, pen_menu, self.pen_menu.clone());
-        Box::new(PopupMenuHost::new(content, menu, self.file_menu.clone()))
+        let content = PopupMenuHost::new(content, menu, self.file_menu.clone());
+        let document_settings = settings_dialog::document_settings(
+            self.document.clone(),
+            settings_dialog::DocumentSettingsBindings {
+                width: self.canvas_width.clone(),
+                height: self.canvas_height.clone(),
+                background: self.background_hex.clone(),
+            },
+            self.document_settings.clone(),
+        );
+        let brush_settings = settings_dialog::brush_settings(
+            self.brushes.clone(),
+            self.brush_name.clone(),
+            self.brush_settings.clone(),
+        );
+        let content = ModalHost::new(content, document_settings, self.document_settings.clone());
+        Box::new(ModalHost::new(
+            content,
+            brush_settings,
+            self.brush_settings.clone(),
+        ))
     }
 }

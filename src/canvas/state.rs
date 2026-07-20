@@ -16,6 +16,7 @@ pub struct CanvasController {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CanvasState {
     pub transform: CanvasTransform,
+    pub transform_initialized: bool,
     pub interaction: Interaction,
     pub active_pen_path: Option<ObjectId>,
     pub selected_nodes: Vec<(ObjectId, usize)>,

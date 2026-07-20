@@ -182,12 +182,7 @@ impl PopupMenuHost {
         }
     }
 
-    fn menu_bounds(
-        &self,
-        bounds: Rect,
-        anchor: Point,
-        context: &mut MeasureContext<'_>,
-    ) -> Rect {
+    fn menu_bounds(&self, bounds: Rect, anchor: Point, context: &mut MeasureContext<'_>) -> Rect {
         let size = self.menu.measure(Constraints::loose(bounds.size), context);
         let maximum_x = (bounds.origin.x + bounds.size.width - size.width).max(bounds.origin.x);
         let maximum_y = (bounds.origin.y + bounds.size.height - size.height).max(bounds.origin.y);
@@ -261,9 +256,7 @@ impl View for PopupMenuHost {
         };
         let menu_bounds = self.menu_bounds_for_event(bounds, anchor, context);
         match event {
-            ViewEvent::PointerPressed { position, button }
-                if !menu_bounds.contains(*position) =>
-            {
+            ViewEvent::PointerPressed { position, button } if !menu_bounds.contains(*position) => {
                 self.menu
                     .handle_event(menu_bounds, &ViewEvent::PointerLeft, context);
                 self.state.close();
@@ -286,8 +279,7 @@ impl View for PopupMenuHost {
                     result
                 }
             }
-            ViewEvent::PointerPressed { position, .. }
-            | ViewEvent::PointerMoved { position }
+            ViewEvent::PointerPressed { position, .. } | ViewEvent::PointerMoved { position }
                 if menu_bounds.contains(*position) =>
             {
                 self.menu.handle_event(menu_bounds, event, context)

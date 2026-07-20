@@ -5,7 +5,7 @@ use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
 use crate::brush::BrushLibrary;
 use crate::document::{
-    BezierNode, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectKind,
+    BezierNode, CanvasSize, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectKind,
 };
 use crate::editor::EditorTool;
 
@@ -46,6 +46,9 @@ impl EditorCanvas {
         let transform = self.controller.get().transform;
         let document_point = transform.canvas_to_document(position, bounds);
         let tolerance = HIT_TOLERANCE / transform.zoom();
+        let drawing_bounds = self.drawing_bounds();
+        let inside_drawing_bounds =
+            drawing_bounds.is_none_or(|drawing_bounds| drawing_bounds.contains(document_point));
 
         match self.active_tool.get() {
             EditorTool::Select => {
@@ -192,6 +195,9 @@ impl EditorCanvas {
                 state.interaction = Interaction::Idle;
             }
             EditorTool::Rectangle => {
+                if !inside_drawing_bounds {
+                    return;
+                }
                 self.controller.get_mut().interaction = Interaction::DrawingShape {
                     kind: ShapeDraftKind::Rectangle,
                     start: document_point,
@@ -199,6 +205,9 @@ impl EditorCanvas {
                 };
             }
             EditorTool::Ellipse => {
+                if !inside_drawing_bounds {
+                    return;
+                }
                 self.controller.get_mut().interaction = Interaction::DrawingShape {
                     kind: ShapeDraftKind::Ellipse,
                     start: document_point,
@@ -206,6 +215,9 @@ impl EditorCanvas {
                 };
             }
             EditorTool::Pencil => {
+                if !inside_drawing_bounds {
+                    return;
+                }
                 self.controller.get_mut().interaction = Interaction::DrawingPencil {
                     raw_points: vec![document_point],
                     preview: None,
@@ -213,6 +225,9 @@ impl EditorCanvas {
                 };
             }
             EditorTool::Pen => {
+                if !inside_drawing_bounds {
+                    return;
+                }
                 let active_path = self.controller.get().active_pen_path;
                 let current_document = self.document.get();
                 let active_object = active_path.and_then(|id| {
@@ -249,9 +264,15 @@ impl EditorCanvas {
     }
 
     fn handle_pointer_move(&self, position: Point, bounds: Rect) -> bool {
+        let drawing_bounds = self.drawing_bounds();
         let mut state = self.controller.get_mut();
         let transform = state.transform;
         let document_point = transform.canvas_to_document(position, bounds);
+        let constrained_point = drawing_bounds
+            .map(|drawing_bounds| clamp_point(document_point, drawing_bounds))
+            .unwrap_or(document_point);
+        let inside_drawing_bounds =
+            drawing_bounds.is_none_or(|drawing_bounds| drawing_bounds.contains(document_point));
         let modifiers = state.modifiers;
 
         if let Interaction::Panning {
@@ -267,8 +288,11 @@ impl EditorCanvas {
         }
 
         match &mut state.interaction {
-            Interaction::DrawingShape { current, .. }
-            | Interaction::Moving { current, .. }
+            Interaction::DrawingShape { current, .. } => {
+                *current = constrained_point;
+                true
+            }
+            Interaction::Moving { current, .. }
             | Interaction::Resizing { current, .. }
             | Interaction::SelectingNodes { current, .. } => {
                 *current = document_point;
@@ -296,6 +320,9 @@ impl EditorCanvas {
                 preview,
                 brush,
             } => {
+                if !inside_drawing_bounds {
+                    return false;
+                }
                 let should_add = raw_points.last().is_none_or(|last| {
                     let delta_x = (document_point.x - last.x) * transform.zoom();
                     let delta_y = (document_point.y - last.y) * transform.zoom();
@@ -309,7 +336,7 @@ impl EditorCanvas {
                 true
             }
             Interaction::PlacingPathNode { handle_out, .. } => {
-                *handle_out = document_point;
+                *handle_out = constrained_point;
                 true
             }
             Interaction::ClosingPath { .. } => true,
@@ -492,6 +519,33 @@ impl EditorCanvas {
         };
     }
 
+    fn drawing_bounds(&self) -> Option<DocumentRect> {
+        match self.document.get().properties().canvas_size {
+            CanvasSize::FitArtwork => None,
+            CanvasSize::Custom { width, height } => Some(DocumentRect {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            }),
+        }
+    }
+
+    fn initialize_transform(&self, bounds: Rect) {
+        if self.controller.get().transform_initialized || bounds.is_empty() {
+            return;
+        }
+
+        let canvas_size = self.document.get().properties().canvas_size;
+        let mut state = self.controller.get_mut();
+        state.transform_initialized = match canvas_size {
+            CanvasSize::Custom { width, height } => {
+                state.transform.fit_canvas(width, height, bounds)
+            }
+            CanvasSize::FitArtwork => true,
+        };
+    }
+
     fn update_node_hover(&self, point: DocumentPoint, zoom: f32) -> bool {
         let previous = self.controller.get().hovered_node;
         let previous_segment = self.controller.get().hovered_segment;
@@ -562,6 +616,7 @@ impl View for EditorCanvas {
     }
 
     fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>) {
+        self.initialize_transform(bounds);
         let document = self.document.get();
         let state = self.controller.get();
         paint_editor_canvas(
@@ -745,6 +800,13 @@ impl View for EditorCanvas {
             _ => EventResult::Ignored,
         }
     }
+}
+
+fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {
+    DocumentPoint::new(
+        point.x.clamp(bounds.x, bounds.x + bounds.width),
+        point.y.clamp(bounds.y, bounds.y + bounds.height),
+    )
 }
 
 fn path_node_position(kind: &ObjectKind, index: usize) -> Option<DocumentPoint> {

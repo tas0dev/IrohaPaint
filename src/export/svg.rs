@@ -42,19 +42,6 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         width = bounds.width,
         height = bounds.height,
     );
-    let background = document.properties().background;
-    if background.alpha > 0 {
-        let _ = write!(
-            source,
-            r##"<rect x="{:.3}" y="{:.3}" width="{:.3}" height="{:.3}" fill="{}" fill-opacity="{:.3}"/>"##,
-            bounds.x,
-            bounds.y,
-            bounds.width,
-            bounds.height,
-            color_hex(background),
-            background.alpha as f32 / 255.0,
-        );
-    }
     for layer in document.layers() {
         source.push_str("<g>");
         for object in layer.objects() {

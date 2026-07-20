@@ -101,14 +101,19 @@ impl DocumentColor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CanvasSize {
-    #[default]
     FitArtwork,
-    Custom {
-        width: f32,
-        height: f32,
-    },
+    Custom { width: f32, height: f32 },
+}
+
+impl Default for CanvasSize {
+    fn default() -> Self {
+        Self::Custom {
+            width: 1200.0,
+            height: 1200.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
