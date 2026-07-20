@@ -22,7 +22,12 @@ pub fn view(
     bindings: InspectorBindings,
 ) -> impl View + 'static {
     let current_document = document.get();
-    let selected_object = current_document.selected_object();
+    let tool = active_tool.get();
+    let selected_object = if edits_selection(tool) {
+        current_document.selected_object()
+    } else {
+        None
+    };
     if bindings.inspected_object.get() != selected_object {
         bindings.inspected_object.set(selected_object);
         if let Some(style) = selected_object
@@ -53,7 +58,6 @@ pub fn view(
                 })
         })
         .collect::<Vec<_>>();
-    let tool = active_tool.get();
     let editing_fill = bindings.color_target.get() == 1;
     let selected_color = if editing_fill {
         bindings.fill_color.get()
@@ -80,19 +84,26 @@ pub fn view(
         content
             .child(ColorPicker::new(bindings.fill_color.binding()).on_commit({
                 let document = document.clone();
+                let active_tool = active_tool.clone();
                 move |color| {
-                    document
-                        .update(|document| document.set_selected_fill_color(document_color(color)));
+                    if edits_selection(active_tool.get()) {
+                        document.update(|document| {
+                            document.set_selected_fill_color(document_color(color))
+                        });
+                    }
                 }
             }))
             .child(Button::new("No Fill").on_click({
                 let fill_color = bindings.fill_color.clone();
                 let document = document.clone();
+                let active_tool = active_tool.clone();
                 move || {
                     fill_color.set(Color::TRANSPARENT);
-                    document.update(|document| {
-                        document.set_selected_fill_color(DocumentColor::TRANSPARENT)
-                    });
+                    if edits_selection(active_tool.get()) {
+                        document.update(|document| {
+                            document.set_selected_fill_color(DocumentColor::TRANSPARENT)
+                        });
+                    }
                 }
             }))
     } else {
@@ -101,11 +112,14 @@ pub fn view(
                 ColorPicker::new(bindings.stroke_color.binding()).on_commit({
                     let brushes = brushes.clone();
                     let document = document.clone();
+                    let active_tool = active_tool.clone();
                     move |color| {
                         let color = document_color(color);
                         brushes
                             .update(|library| library.update_active(|brush| brush.color = color));
-                        document.update(|document| document.set_selected_stroke_color(color));
+                        if edits_selection(active_tool.get()) {
+                            document.update(|document| document.set_selected_stroke_color(color));
+                        }
                     }
                 }),
             )
@@ -120,11 +134,15 @@ pub fn view(
                     .on_commit({
                         let brushes = brushes.clone();
                         let document = document.clone();
+                        let active_tool = active_tool.clone();
                         move |width| {
                             brushes.update(|library| {
                                 library.update_active(|brush| brush.width = width)
                             });
-                            document.update(|document| document.set_selected_stroke_width(width));
+                            if edits_selection(active_tool.get()) {
+                                document
+                                    .update(|document| document.set_selected_stroke_width(width));
+                            }
                         }
                     }),
             )
@@ -225,6 +243,10 @@ fn document_color(color: Color) -> DocumentColor {
 
 fn view_color(color: DocumentColor) -> Color {
     Color::rgba(color.red, color.green, color.blue, color.alpha)
+}
+
+fn edits_selection(tool: EditorTool) -> bool {
+    matches!(tool, EditorTool::Select | EditorTool::NodeEdit)
 }
 
 fn node_kind_button(
