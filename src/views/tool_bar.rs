@@ -32,8 +32,8 @@ fn tool_icon(tool: EditorTool) -> &'static str {
     match tool {
         EditorTool::Select => "mouse-pointer-2",
         EditorTool::NodeEdit => "spline",
-        EditorTool::Pencil => "pencil-line",
-        EditorTool::Pen => "pen-tool",
+        EditorTool::Pencil => "pen-tool",
+        EditorTool::Pen => "line",
         EditorTool::Rectangle => "square",
         EditorTool::Ellipse => "circle",
     }
