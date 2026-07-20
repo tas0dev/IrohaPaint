@@ -120,12 +120,15 @@ where
         let state_changed = take_state_changed();
 
         if state_changed {
-            let redraw = if redraw_request.is_requested() {
-                redraw_request
-            } else {
-                RedrawRequest::Full
-            };
-            self.rebuild_root_with_redraw(viewport, redraw);
+            /*
+             * StateはViewツリーの任意の場所から参照されるため、イベントを発生させた
+             * Viewのdirty領域だけでは変更の影響範囲を特定できません。
+             *
+             * 例えば選択ボタンを切り替えると、押したボタンだけでなく以前選択されて
+             * いたボタンも再描画する必要があります。依存関係追跡がない現状では、
+             * State変更とViewツリー再構築は全体無効化として扱います。
+             */
+            self.rebuild_root(viewport);
         } else {
             self.pending_redraw = self.pending_redraw.merge(redraw_request);
         }
@@ -143,7 +146,7 @@ where
         let dirty_bounds = match std::mem::take(&mut self.pending_redraw) {
             RedrawRequest::Region(bounds) => bounds
                 .intersection(viewport_bounds)
-                .unwrap_or(viewport_bounds),
+                .unwrap_or_default(),
 
             RedrawRequest::None | RedrawRequest::Full => viewport_bounds,
         };
