@@ -124,10 +124,19 @@ impl Default for CanvasSize {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DocumentProperties {
     pub canvas_size: CanvasSize,
     pub background: DocumentColor,
+}
+
+impl Default for DocumentProperties {
+    fn default() -> Self {
+        Self {
+            canvas_size: CanvasSize::default(),
+            background: DocumentColor::WHITE,
+        }
+    }
 }
 
 impl Default for DocumentColor {

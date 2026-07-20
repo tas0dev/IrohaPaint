@@ -43,6 +43,19 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         width = bounds.width,
         height = bounds.height,
     );
+    let background = document.properties().background;
+    if background.alpha > 0 {
+        let _ = write!(
+            source,
+            r#"<rect x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" fill="{color}" fill-opacity="{opacity:.3}"/>"#,
+            x = bounds.x,
+            y = bounds.y,
+            width = bounds.width,
+            height = bounds.height,
+            color = color_hex(background),
+            opacity = background.alpha as f32 / 255.0,
+        );
+    }
     let mut mask_id = 0_u64;
     for (layer_index, layer) in document.layers().iter().enumerate() {
         if !layer.is_visible() {

@@ -53,7 +53,7 @@ impl App for IrohaPaint {
             brushes: State::new(BrushLibrary::default()),
             canvas_width: State::new(String::from("1200")),
             canvas_height: State::new(String::from("1200")),
-            background_hex: State::new(String::from("#00000000")),
+            background_hex: State::new(String::from("#FFFFFFFF")),
             brush_name: State::new(String::from("Custom Brush")),
             brush_status: State::new(String::new()),
             layer_name: State::new(String::new()),
