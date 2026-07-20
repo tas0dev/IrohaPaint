@@ -1,6 +1,8 @@
 mod app;
+mod canvas;
 mod document;
 mod editor;
+mod icons;
 mod views;
 
 use app::IrohaPaint;

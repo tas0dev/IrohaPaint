@@ -1,12 +1,14 @@
 use viewkit::prelude::*;
 
+use crate::canvas::{CanvasController, EditorCanvas};
 use crate::document::Document;
 use crate::editor::EditorTool;
-use crate::views::{canvas, inspector, menu_bar, tool_bar};
+use crate::views::{inspector, menu_bar, tool_bar};
 
 pub struct IrohaPaint {
     active_tool: State<EditorTool>,
     document: State<Document>,
+    canvas: CanvasController,
 }
 
 impl App for IrohaPaint {
@@ -16,6 +18,7 @@ impl App for IrohaPaint {
         Self {
             active_tool: State::new(EditorTool::Select),
             document: State::new(Document::new()),
+            canvas: CanvasController::new(),
         }
     }
 
@@ -30,7 +33,7 @@ impl App for IrohaPaint {
             VStack::new()
                 .alignment(StackAlignment::Stretch)
                 .gap(StackGap::None)
-                .child(menu_bar::view())
+                .child(menu_bar::view(self.document.clone()))
                 .child(Divider::new())
                 .child(
                     HStack::new()
@@ -38,7 +41,15 @@ impl App for IrohaPaint {
                         .gap(StackGap::None)
                         .child(tool_bar::view(self.active_tool.clone()))
                         .child(Divider::new())
-                        .child(canvas::view().layout().flex_grow(1.0))
+                        .child(
+                            EditorCanvas::new(
+                                self.document.clone(),
+                                self.active_tool.clone(),
+                                self.canvas.clone(),
+                            )
+                            .layout()
+                            .flex_grow(1.0),
+                        )
                         .child(Divider::new())
                         .child(inspector::view(self.document.clone()))
                         .layout()

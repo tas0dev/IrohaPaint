@@ -2,6 +2,7 @@
 name = "IrohaPaint"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 viewkit = "1.0.3"
