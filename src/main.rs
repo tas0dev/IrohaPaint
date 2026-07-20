@@ -1,7 +1,9 @@
 mod app;
+mod brush;
 mod canvas;
 pub mod document;
 mod editor;
+mod export;
 mod icons;
 mod views;
 

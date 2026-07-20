@@ -3,8 +3,9 @@ use viewkit::platform::{ButtonState, KeyCode, KeyModifiers, PointerButton};
 use viewkit::prelude::{CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
+use crate::brush::BrushLibrary;
 use crate::document::{
-    BezierNode, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectKind, StrokeStyle,
+    BezierNode, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectKind,
 };
 use crate::editor::EditorTool;
 
@@ -23,6 +24,7 @@ pub struct EditorCanvas {
     document: State<Document>,
     active_tool: State<EditorTool>,
     controller: CanvasController,
+    brushes: State<BrushLibrary>,
 }
 
 impl EditorCanvas {
@@ -30,11 +32,13 @@ impl EditorCanvas {
         document: State<Document>,
         active_tool: State<EditorTool>,
         controller: CanvasController,
+        brushes: State<BrushLibrary>,
     ) -> Self {
         Self {
             document,
             active_tool,
             controller,
+            brushes,
         }
     }
 
@@ -205,6 +209,7 @@ impl EditorCanvas {
                 self.controller.get_mut().interaction = Interaction::DrawingPencil {
                     raw_points: vec![document_point],
                     preview: None,
+                    brush: self.brushes.get().active().clone(),
                 };
             }
             EditorTool::Pen => {
@@ -289,6 +294,7 @@ impl EditorCanvas {
             Interaction::DrawingPencil {
                 raw_points,
                 preview,
+                brush,
             } => {
                 let should_add = raw_points.last().is_none_or(|last| {
                     let delta_x = (document_point.x - last.x) * transform.zoom();
@@ -297,7 +303,8 @@ impl EditorCanvas {
                 });
                 if should_add {
                     raw_points.push(document_point);
-                    *preview = fit_pencil_stroke(raw_points, 1.25 / transform.zoom());
+                    *preview =
+                        fit_pencil_stroke(raw_points, brush.fitting_tolerance(transform.zoom()));
                 }
                 true
             }
@@ -342,10 +349,11 @@ impl EditorCanvas {
             }
             Interaction::DrawingPencil {
                 preview: Some(path),
+                brush,
                 ..
             } => {
                 self.document
-                    .update(|document| document.add_fitted_path(path, StrokeStyle::default()));
+                    .update(|document| document.add_fitted_path(path, brush.stroke_style()));
                 let mut state = self.controller.get_mut();
                 state.selected_nodes.clear();
                 state.active_pen_path = None;
@@ -370,7 +378,9 @@ impl EditorCanvas {
                         .update(|document| document.append_path_node(id, node));
                     id
                 } else {
-                    self.document.update(|document| document.add_path(node))
+                    let stroke = self.brushes.get().active().stroke_style();
+                    self.document
+                        .update(|document| document.add_path_with_style(node, stroke))
                 };
                 let node_index = self
                     .document

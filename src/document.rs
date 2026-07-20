@@ -51,6 +51,78 @@ impl DocumentRect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectId(u64);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DocumentColor {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub alpha: u8,
+}
+
+impl DocumentColor {
+    pub const BLACK: Self = Self::rgba(0, 0, 0, 255);
+    pub const WHITE: Self = Self::rgba(255, 255, 255, 255);
+    pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
+
+    pub const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        Self {
+            red,
+            green,
+            blue,
+            alpha,
+        }
+    }
+
+    pub fn from_hex(value: &str) -> Option<Self> {
+        let value = value.trim().trim_start_matches('#');
+        let number = u32::from_str_radix(value, 16).ok()?;
+        match value.len() {
+            6 => Some(Self::rgba(
+                ((number >> 16) & 0xff) as u8,
+                ((number >> 8) & 0xff) as u8,
+                (number & 0xff) as u8,
+                255,
+            )),
+            8 => Some(Self::rgba(
+                ((number >> 24) & 0xff) as u8,
+                ((number >> 16) & 0xff) as u8,
+                ((number >> 8) & 0xff) as u8,
+                (number & 0xff) as u8,
+            )),
+            _ => None,
+        }
+    }
+
+    pub fn to_hex(self) -> String {
+        format!(
+            "#{:02X}{:02X}{:02X}{:02X}",
+            self.red, self.green, self.blue, self.alpha
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum CanvasSize {
+    #[default]
+    FitArtwork,
+    Custom {
+        width: f32,
+        height: f32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DocumentProperties {
+    pub canvas_size: CanvasSize,
+    pub background: DocumentColor,
+}
+
+impl Default for DocumentColor {
+    fn default() -> Self {
+        Self::TRANSPARENT
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BezierNode {
     pub position: DocumentPoint,
@@ -197,6 +269,7 @@ pub struct StrokeStyle {
     pub width: f32,
     pub cap: StrokeCap,
     pub join: StrokeJoin,
+    pub color: DocumentColor,
 }
 
 impl Default for StrokeStyle {
@@ -205,6 +278,7 @@ impl Default for StrokeStyle {
             width: 2.0,
             cap: StrokeCap::Round,
             join: StrokeJoin::Round,
+            color: DocumentColor::BLACK,
         }
     }
 }
@@ -306,6 +380,7 @@ struct DocumentSnapshot {
     selected_layer: Option<usize>,
     selected_object: Option<ObjectId>,
     next_object_id: u64,
+    properties: DocumentProperties,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -316,6 +391,7 @@ pub struct Document {
     next_object_id: u64,
     undo_stack: Vec<DocumentSnapshot>,
     redo_stack: Vec<DocumentSnapshot>,
+    properties: DocumentProperties,
 }
 
 impl Document {
@@ -327,11 +403,39 @@ impl Document {
             next_object_id: 1,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            properties: DocumentProperties::default(),
         }
     }
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    pub fn properties(&self) -> DocumentProperties {
+        self.properties
+    }
+
+    pub fn set_canvas_size(&mut self, canvas_size: CanvasSize) {
+        let canvas_size = match canvas_size {
+            CanvasSize::Custom { width, height }
+                if width > 0.0 && height > 0.0 && width.is_finite() && height.is_finite() =>
+            {
+                CanvasSize::Custom { width, height }
+            }
+            CanvasSize::Custom { .. } => return,
+            CanvasSize::FitArtwork => CanvasSize::FitArtwork,
+        };
+        if self.properties.canvas_size != canvas_size {
+            self.record_change();
+            self.properties.canvas_size = canvas_size;
+        }
+    }
+
+    pub fn set_background(&mut self, background: DocumentColor) {
+        if self.properties.background != background {
+            self.record_change();
+            self.properties.background = background;
+        }
     }
 
     pub fn selected_layer(&self) -> Option<usize> {
@@ -369,9 +473,13 @@ impl Document {
     }
 
     pub fn add_path(&mut self, first_node: BezierNode) -> ObjectId {
+        self.add_path_with_style(first_node, StrokeStyle::default())
+    }
+
+    pub fn add_path_with_style(&mut self, first_node: BezierNode, stroke: StrokeStyle) -> ObjectId {
         self.add_object(ObjectKind::Path {
             path: BezierPath::new(first_node),
-            stroke: StrokeStyle::default(),
+            stroke,
         })
     }
 
@@ -525,6 +633,23 @@ impl Document {
         self.edit_object(id, |object| object.translate(delta));
     }
 
+    pub fn set_selected_stroke_color(&mut self, color: DocumentColor) {
+        let Some(id) = self.selected_object else {
+            return;
+        };
+        if !self
+            .object(id)
+            .is_some_and(|object| matches!(object.kind, ObjectKind::Path { .. }))
+        {
+            return;
+        }
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { stroke, .. } = &mut object.kind {
+                stroke.color = color;
+            }
+        });
+    }
+
     pub fn delete_selected_object(&mut self) {
         let Some(id) = self.selected_object else {
             return;
@@ -609,6 +734,7 @@ impl Document {
             selected_layer: self.selected_layer,
             selected_object: self.selected_object,
             next_object_id: self.next_object_id,
+            properties: self.properties,
         }
     }
 
@@ -617,6 +743,7 @@ impl Document {
         self.selected_layer = snapshot.selected_layer;
         self.selected_object = snapshot.selected_object;
         self.next_object_id = snapshot.next_object_id;
+        self.properties = snapshot.properties;
     }
 }
 

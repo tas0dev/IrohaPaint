@@ -1,5 +1,6 @@
 use viewkit::prelude::Point;
 
+use crate::brush::BrushDefinition;
 use crate::document::{
     BezierNode, BezierPath, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind,
 };
@@ -59,6 +60,7 @@ pub enum Interaction {
     DrawingPencil {
         raw_points: Vec<DocumentPoint>,
         preview: Option<BezierPath>,
+        brush: BrushDefinition,
     },
     PlacingPathNode {
         path_id: Option<ObjectId>,

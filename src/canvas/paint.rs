@@ -5,8 +5,8 @@ use viewkit::prelude::{Point, Rect, SvgData};
 use viewkit::view::PaintContext;
 
 use crate::document::{
-    BezierNode, BezierPath, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId,
-    ObjectKind, StrokeCap, StrokeJoin, StrokeStyle,
+    BezierNode, BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect,
+    NodeComponent, ObjectId, ObjectKind, StrokeCap, StrokeJoin, StrokeStyle,
 };
 use crate::editor::EditorTool;
 
@@ -39,6 +39,32 @@ pub fn paint_editor_canvas(
     context
         .display_list
         .push(DrawCommand::PushClip { rect: bounds });
+
+    if let CanvasSize::Custom { width, height } = document.properties().canvas_size {
+        let artboard = transform.document_rect_to_canvas(
+            DocumentRect {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            },
+            bounds,
+        );
+        let background = document.properties().background;
+        context.display_list.push(DrawCommand::FillRect {
+            rect: artboard,
+            color: if background.alpha == 0 {
+                context.theme.colors.elevated_surface
+            } else {
+                view_color(background)
+            },
+        });
+        context.display_list.push(DrawCommand::StrokeRect {
+            rect: artboard,
+            color: context.theme.colors.border,
+            width: 1.0,
+        });
+    }
 
     for layer in document.layers() {
         for object in layer.objects() {
@@ -182,10 +208,14 @@ fn paint_svg_path(
             width: stroke.width * transform.zoom(),
             ..stroke
         },
-        context.theme.colors.text_primary,
+        view_color(stroke.color),
         svg_bounds,
         context,
     );
+}
+
+fn view_color(color: DocumentColor) -> viewkit::prelude::Color {
+    viewkit::prelude::Color::rgba(color.red, color.green, color.blue, color.alpha)
 }
 
 fn paint_svg_commands(
@@ -239,11 +269,12 @@ fn paint_draft(
         }
         Interaction::DrawingPencil {
             preview: Some(path),
+            brush,
             ..
         } => {
             paint_svg_path(
                 path,
-                StrokeStyle::default(),
+                brush.stroke_style(),
                 transform,
                 canvas_bounds,
                 context,
