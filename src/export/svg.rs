@@ -1,8 +1,9 @@
 use std::fmt::Write;
 
 use crate::document::{
-    BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, ObjectKind,
-    PAINT_TILE_SIZE, PaintLayer, StrokeCap, StrokeJoin, StrokeStyle, variable_stroke_outlines,
+    BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, ObjectId,
+    ObjectKind, PAINT_TILE_SIZE, PaintLayer, StrokeCap, StrokeJoin, StrokeStyle,
+    variable_stroke_outlines,
 };
 
 use super::ExportError;
@@ -43,15 +44,36 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         height = bounds.height,
     );
     let mut mask_id = 0_u64;
-    for layer in document.layers() {
+    for (layer_index, layer) in document.layers().iter().enumerate() {
         if !layer.is_visible() {
             continue;
         }
-        source.push_str("<g>");
-        write_paint_layer(&mut source, layer.paint())?;
-        for object in layer.objects() {
-            write_object(&mut source, object.kind(), &mut mask_id);
+        let clip_id = if let Some(base_index) = document.clip_base_layer(layer_index) {
+            let id = mask_id;
+            mask_id += 1;
+            let _ = write!(
+                source,
+                r#"<defs><mask id="layer-clip-{id}" maskUnits="userSpaceOnUse" x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" style="mask-type:luminance">"#,
+                x = bounds.x,
+                y = bounds.y,
+                width = bounds.width,
+                height = bounds.height,
+            );
+            let base = &document.layers()[base_index];
+            if base.is_visible() {
+                write_layer_mask_content(&mut source, base)?;
+            }
+            source.push_str("</mask></defs>");
+            Some(id)
+        } else {
+            None
+        };
+        if let Some(id) = clip_id {
+            let _ = write!(source, r#"<g mask="url(#layer-clip-{id})">"#);
+        } else {
+            source.push_str("<g>");
         }
+        write_layer_content(&mut source, layer, &mut mask_id)?;
         source.push_str("</g>");
     }
     source.push_str("</svg>\n");
@@ -60,6 +82,192 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         width: bounds.width,
         height: bounds.height,
     })
+}
+
+pub(crate) fn serialize_layer(
+    document: &Document,
+    layer_index: usize,
+    viewport: DocumentRect,
+    preview: Option<(ObjectId, &ObjectKind)>,
+    extra: Option<&ObjectKind>,
+) -> Result<String, ExportError> {
+    let Some(layer) = document.layers().get(layer_index) else {
+        return Err(ExportError::EmptyDocument);
+    };
+    let mut source = String::new();
+    let _ = write!(
+        source,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.3}" height="{height:.3}" viewBox="{x:.3} {y:.3} {width:.3} {height:.3}">"#,
+        x = viewport.x,
+        y = viewport.y,
+        width = viewport.width.max(0.1),
+        height = viewport.height.max(0.1),
+    );
+    let mut mask_id = 1_u64;
+    if let Some(base_index) = document.clip_base_layer(layer_index) {
+        let _ = write!(
+            source,
+            r#"<defs><mask id="canvas-layer-clip" maskUnits="userSpaceOnUse" x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" style="mask-type:luminance">"#,
+            x = viewport.x,
+            y = viewport.y,
+            width = viewport.width.max(0.1),
+            height = viewport.height.max(0.1),
+        );
+        let base = &document.layers()[base_index];
+        if base.is_visible() {
+            write_layer_mask_content(&mut source, base)?;
+        }
+        source.push_str("</mask></defs><g mask=\"url(#canvas-layer-clip)\">");
+    } else {
+        source.push_str("<g>");
+    }
+    write_paint_layer(&mut source, layer.paint())?;
+    for object in layer.objects() {
+        if preview.is_some_and(|(id, _)| id == object.id()) {
+            continue;
+        }
+        write_object(&mut source, object.kind(), &mut mask_id);
+    }
+    if let Some((_, kind)) = preview {
+        write_object(&mut source, kind, &mut mask_id);
+    }
+    if let Some(extra) = extra {
+        write_object(&mut source, extra, &mut mask_id);
+    }
+    source.push_str("</g></svg>");
+    Ok(source)
+}
+
+fn write_layer_content(
+    source: &mut String,
+    layer: &crate::document::Layer,
+    mask_id: &mut u64,
+) -> Result<(), ExportError> {
+    write_paint_layer(source, layer.paint())?;
+    for object in layer.objects() {
+        write_object(source, object.kind(), mask_id);
+    }
+    Ok(())
+}
+
+fn write_layer_mask_content(
+    source: &mut String,
+    layer: &crate::document::Layer,
+) -> Result<(), ExportError> {
+    write_paint_mask(source, layer.paint())?;
+    for object in layer.objects() {
+        match object.kind() {
+            ObjectKind::Rectangle { bounds, style } => {
+                let _ = write!(
+                    source,
+                    r#"<rect x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" fill="white" fill-opacity="{fill_opacity:.3}" stroke="white" stroke-opacity="{stroke_opacity:.3}" stroke-width="{stroke_width:.3}"/>"#,
+                    x = bounds.x,
+                    y = bounds.y,
+                    width = bounds.width,
+                    height = bounds.height,
+                    fill_opacity = style.fill.alpha as f32 / 255.0,
+                    stroke_opacity = style.stroke.color.alpha as f32 / 255.0,
+                    stroke_width = style.stroke.width.max(0.0),
+                );
+            }
+            ObjectKind::Ellipse { bounds, style } => {
+                let _ = write!(
+                    source,
+                    r#"<ellipse cx="{cx:.3}" cy="{cy:.3}" rx="{rx:.3}" ry="{ry:.3}" fill="white" fill-opacity="{fill_opacity:.3}" stroke="white" stroke-opacity="{stroke_opacity:.3}" stroke-width="{stroke_width:.3}"/>"#,
+                    cx = bounds.x + bounds.width * 0.5,
+                    cy = bounds.y + bounds.height * 0.5,
+                    rx = bounds.width * 0.5,
+                    ry = bounds.height * 0.5,
+                    fill_opacity = style.fill.alpha as f32 / 255.0,
+                    stroke_opacity = style.stroke.color.alpha as f32 / 255.0,
+                    stroke_width = style.stroke.width.max(0.0),
+                );
+            }
+            ObjectKind::Path {
+                path,
+                style,
+                variable_width,
+                cutouts,
+            } => {
+                let mut commands = String::new();
+                if *variable_width {
+                    if path.is_closed() && style.fill.alpha > 0 {
+                        write_path_commands(&mut commands, path);
+                        let _ = write!(
+                            source,
+                            r#"<path d="{commands}" fill="white" fill-opacity="{:.3}" stroke="none"/>"#,
+                            style.fill.alpha as f32 / 255.0,
+                        );
+                        commands.clear();
+                    }
+                    for outline in variable_stroke_outlines(path, style.stroke) {
+                        write_path_commands(&mut commands, &outline);
+                    }
+                    let _ = write!(
+                        source,
+                        r#"<path d="{commands}" fill="white" fill-opacity="{:.3}" fill-rule="evenodd" stroke="none"/>"#,
+                        style.stroke.color.alpha as f32 / 255.0,
+                    );
+                } else {
+                    write_path_commands(&mut commands, path);
+                    let _ = write!(
+                        source,
+                        r#"<path d="{commands}" fill="white" fill-opacity="{fill_opacity:.3}" stroke="white" stroke-opacity="{stroke_opacity:.3}" stroke-width="{width:.3}" stroke-linecap="{cap}" stroke-linejoin="{join}"/>"#,
+                        fill_opacity = if path.is_closed() {
+                            style.fill.alpha as f32 / 255.0
+                        } else {
+                            0.0
+                        },
+                        stroke_opacity = style.stroke.color.alpha as f32 / 255.0,
+                        width = style.stroke.width.max(0.0),
+                        cap = cap_name(style.stroke.cap),
+                        join = join_name(style.stroke.join),
+                    );
+                }
+                if !cutouts.is_empty() {
+                    let mut cutout_commands = String::new();
+                    for cutout in cutouts {
+                        write_path_commands(&mut cutout_commands, cutout);
+                    }
+                    let _ = write!(
+                        source,
+                        r#"<path d="{cutout_commands}" fill="black" stroke="black"/>"#,
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_paint_mask(source: &mut String, layer: &PaintLayer) -> Result<(), ExportError> {
+    for tile in layer.tiles() {
+        let mut pixels = tile.pixels().to_vec();
+        for pixel in pixels.chunks_exact_mut(4) {
+            let alpha = pixel[3];
+            pixel[0] = alpha;
+            pixel[1] = alpha;
+            pixel[2] = alpha;
+        }
+        let size = tiny_skia::IntSize::from_wh(PAINT_TILE_SIZE, PAINT_TILE_SIZE)
+            .ok_or(ExportError::InvalidDimensions)?;
+        let pixmap =
+            tiny_skia::Pixmap::from_vec(pixels, size).ok_or(ExportError::InvalidDimensions)?;
+        let png = pixmap
+            .encode_png()
+            .map_err(|error| ExportError::Png(error.to_string()))?;
+        let bounds = tile.document_bounds();
+        let _ = write!(
+            source,
+            r#"<image x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" href="data:image/png;base64,{data}"/>"#,
+            x = bounds.x,
+            y = bounds.y,
+            width = bounds.width,
+            height = bounds.height,
+            data = base64(&png),
+        );
+    }
+    Ok(())
 }
 
 fn write_paint_layer(source: &mut String, layer: &PaintLayer) -> Result<(), ExportError> {
@@ -283,20 +491,35 @@ fn write_curve(
 
 fn artwork_bounds(document: &Document) -> Option<DocumentRect> {
     let mut bounds = None;
-    for layer in document.layers() {
+    for (index, layer) in document.layers().iter().enumerate() {
         if !layer.is_visible() {
             continue;
         }
-        if let Some(paint_bounds) = layer.paint().bounds() {
-            bounds = Some(bounds.map_or(paint_bounds, |bounds| union(bounds, paint_bounds)));
+        let mut current = layer_bounds(layer);
+        if let Some(base_index) = document.clip_base_layer(index) {
+            let base = &document.layers()[base_index];
+            current = if base.is_visible() {
+                current.and_then(|current| {
+                    layer_bounds(base).and_then(|base| intersection(current, base))
+                })
+            } else {
+                None
+            };
         }
-        for object in layer.objects() {
-            if let Some(object_bounds) = object_bounds(object.kind()) {
-                bounds = Some(bounds.map_or(object_bounds, |bounds| union(bounds, object_bounds)));
-            }
+        if let Some(current) = current {
+            bounds = Some(bounds.map_or(current, |bounds| union(bounds, current)));
         }
     }
     bounds
+}
+
+fn layer_bounds(layer: &crate::document::Layer) -> Option<DocumentRect> {
+    layer
+        .objects()
+        .iter()
+        .filter_map(|object| object_bounds(object.kind()))
+        .chain(layer.paint().bounds())
+        .reduce(union)
 }
 
 fn object_bounds(kind: &ObjectKind) -> Option<DocumentRect> {
@@ -421,6 +644,19 @@ fn union(first: DocumentRect, second: DocumentRect) -> DocumentRect {
         width: right - x,
         height: bottom - y,
     }
+}
+
+fn intersection(first: DocumentRect, second: DocumentRect) -> Option<DocumentRect> {
+    let x = first.x.max(second.x);
+    let y = first.y.max(second.y);
+    let right = (first.x + first.width).min(second.x + second.width);
+    let bottom = (first.y + first.height).min(second.y + second.height);
+    (right > x && bottom > y).then_some(DocumentRect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    })
 }
 
 fn expand(bounds: DocumentRect, amount: f32) -> DocumentRect {

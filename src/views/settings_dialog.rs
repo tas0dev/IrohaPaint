@@ -1,5 +1,6 @@
 use viewkit::prelude::*;
 
+use super::icon_button;
 use crate::brush::{BrushDefinition, BrushKind, BrushLibrary, BrushTip};
 use crate::document::{CanvasSize, Document, DocumentColor};
 use crate::editor::EditorTool;
@@ -26,19 +27,23 @@ pub fn layer_name_settings(
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(Button::new("Rename").style(ButtonStyle::Primary).on_click({
-                            let document = document.clone();
-                            let name = name.clone();
-                            let modal = modal.clone();
-                            move || {
-                                if document
-                                    .update(|document| document.rename_selected_layer(&name.get()))
-                                {
-                                    modal.close();
-                                }
-                            }
-                        }))
-                        .child(Button::new("Cancel").on_click(move || modal.close())),
+                        .child(
+                            icon_button::view("check")
+                                .style(ButtonStyle::Primary)
+                                .on_click({
+                                    let document = document.clone();
+                                    let name = name.clone();
+                                    let modal = modal.clone();
+                                    move || {
+                                        if document.update(|document| {
+                                            document.rename_selected_layer(&name.get())
+                                        }) {
+                                            modal.close();
+                                        }
+                                    }
+                                }),
+                        )
+                        .child(icon_button::view("x").on_click(move || modal.close())),
                 ),
         ),
     )
@@ -69,7 +74,7 @@ pub fn document_settings(
                         .child(TextField::new(width.binding()).placeholder("Width"))
                         .child(TextField::new(height.binding()).placeholder("Height")),
                 )
-                .child(Button::new("Apply Size").on_click({
+                .child(icon_button::view("check").on_click({
                     let document = document.clone();
                     let width = width.clone();
                     let height = height.clone();
@@ -86,7 +91,7 @@ pub fn document_settings(
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(Button::new("Set Canvas Background").on_click({
+                        .child(icon_button::view("paint-bucket").on_click({
                             let document = document.clone();
                             let background = background.clone();
                             move || {
@@ -95,7 +100,7 @@ pub fn document_settings(
                                 }
                             }
                         }))
-                        .child(Button::new("Transparent").on_click({
+                        .child(icon_button::view("circle-off").on_click({
                             let document = document.clone();
                             move || {
                                 document.update(|document| {
@@ -105,7 +110,7 @@ pub fn document_settings(
                         })),
                 )
                 .child(Divider::new())
-                .child(Button::new("Close").on_click(move || modal.close())),
+                .child(icon_button::view("x").on_click(move || modal.close())),
         ),
     )
 }
@@ -193,7 +198,7 @@ pub fn brush_settings(
                 .child(
                     HStack::new()
                         .gap(StackGap::Small)
-                        .child(Button::new("Save Brush File").on_click({
+                        .child(icon_button::view("save").on_click({
                             let brushes = brushes.clone();
                             let preset_name = preset_name.clone();
                             let status = status.clone();
@@ -214,7 +219,7 @@ pub fn brush_settings(
                                 }
                             }
                         }))
-                        .child(Button::new("Reload Brushes").on_click({
+                        .child(icon_button::view("refresh-cw").on_click({
                             let brushes = brushes.clone();
                             let status = status.clone();
                             let active_tool = active_tool.clone();
@@ -233,7 +238,7 @@ pub fn brush_settings(
                         })),
                 )
                 .child(Divider::new())
-                .child(Button::new("Close").on_click(move || modal.close())),
+                .child(icon_button::view("x").on_click(move || modal.close())),
         ),
     )
 }

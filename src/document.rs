@@ -416,6 +416,7 @@ pub struct Layer {
     objects: Vec<DocumentObject>,
     paint: PaintLayer,
     visible: bool,
+    clipped: bool,
 }
 
 impl Layer {
@@ -425,6 +426,7 @@ impl Layer {
             objects: Vec::new(),
             paint: PaintLayer::default(),
             visible: true,
+            clipped: false,
         }
     }
 
@@ -442,6 +444,10 @@ impl Layer {
 
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    pub fn is_clipped(&self) -> bool {
+        self.clipped
     }
 }
 
@@ -530,8 +536,13 @@ impl Document {
             }
             number += 1;
         };
-        self.layers.push(Layer::new(name));
-        let index = self.layers.len() - 1;
+        // A new layer belongs directly above the layer the artist is working on.
+        // Besides matching the visible layer stack, this makes "add, then clip"
+        // reliably target the intended base layer instead of an unrelated top layer.
+        let index = self
+            .selected_layer
+            .map_or(self.layers.len(), |selected| selected + 1);
+        self.layers.insert(index, Layer::new(name));
         self.selected_layer = Some(index);
         self.selected_object = None;
         index
@@ -559,6 +570,7 @@ impl Document {
         };
         self.record_change();
         self.layers.remove(index);
+        self.layers[0].clipped = false;
         self.selected_layer = Some(index.min(self.layers.len() - 1));
         self.selected_object = None;
         true
@@ -568,10 +580,49 @@ impl Document {
         let Some(index) = self.selected_layer else {
             return false;
         };
+        self.toggle_layer_visibility(index)
+    }
+
+    pub fn toggle_layer_visibility(&mut self, index: usize) -> bool {
+        if index >= self.layers.len() {
+            return false;
+        }
         self.record_change();
         self.layers[index].visible = !self.layers[index].visible;
         self.selected_object = None;
         true
+    }
+
+    pub fn toggle_selected_layer_clipping(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        self.toggle_layer_clipping(index)
+    }
+
+    pub fn toggle_layer_clipping(&mut self, index: usize) -> bool {
+        if index == 0 || index >= self.layers.len() {
+            return false;
+        }
+        self.record_change();
+        self.layers[index].clipped = !self.layers[index].clipped;
+        self.selected_object = None;
+        true
+    }
+
+    /// Returns the shared base for a clipping stack.
+    ///
+    /// Consecutive clipped layers all use the first non-clipped layer below
+    /// them, which is the behavior expected when stacking shadow and highlight
+    /// layers over one anime-color base.
+    pub fn clip_base_layer(&self, layer_index: usize) -> Option<usize> {
+        (layer_index < self.layers.len() && self.layers[layer_index].clipped)
+            .then(|| {
+                (0..layer_index)
+                    .rev()
+                    .find(|index| !self.layers[*index].clipped)
+            })
+            .flatten()
     }
 
     pub fn move_selected_layer_up(&mut self) -> bool {
@@ -583,6 +634,7 @@ impl Document {
         }
         self.record_change();
         self.layers.swap(index, index + 1);
+        self.layers[0].clipped = false;
         self.selected_layer = Some(index + 1);
         self.selected_object = None;
         true
@@ -597,6 +649,7 @@ impl Document {
         }
         self.record_change();
         self.layers.swap(index, index - 1);
+        self.layers[0].clipped = false;
         self.selected_layer = Some(index - 1);
         self.selected_object = None;
         true

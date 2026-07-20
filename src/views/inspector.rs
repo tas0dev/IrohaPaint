@@ -4,6 +4,7 @@ use crate::brush::{BrushKind, BrushLibrary};
 use crate::canvas::CanvasController;
 use crate::document::{Document, DocumentColor, NodeKind, ObjectId};
 use crate::editor::EditorTool;
+use super::icon_button;
 
 pub struct InspectorBindings {
     pub stroke_color: State<Color>,
@@ -77,37 +78,57 @@ pub fn view(
         }
     }
     let selected_layer = current_document.selected_layer();
-    let selected_layer_name = selected_layer
+    let selected_layer_clipped = selected_layer
         .and_then(|index| current_document.layers().get(index))
-        .map(|layer| layer.name().to_owned());
-    let selected_layer_visible = selected_layer
-        .and_then(|index| current_document.layers().get(index))
-        .is_some_and(|layer| layer.is_visible());
+        .is_some_and(|layer| layer.is_clipped());
     let layer_rows = current_document
         .layers()
         .iter()
         .enumerate()
         .rev()
         .map(|(index, layer)| {
-            ListRow::new(layer.name())
-                .trailing(if layer.is_visible() {
-                    "Visible"
-                } else {
-                    "Hidden"
-                })
-                .selected(selected_layer == Some(index))
-                .on_select({
+            let layer_name = layer.name().to_owned();
+            let visible = layer.is_visible();
+            HStack::new()
+                .alignment(StackAlignment::Center)
+                .gap(StackGap::ExtraSmall)
+                .child(
+                    ListRow::new(layer_name.clone())
+                        .selected(selected_layer == Some(index))
+                        .on_select({
+                            let document = document.clone();
+                            let canvas = canvas.clone();
+                            move || {
+                                document.update(|document| document.select_layer(index));
+                                clear_canvas_selection(&canvas);
+                            }
+                        })
+                        .layout()
+                        .flex_grow(1.0),
+                )
+                .child(
+                    icon_button::view(if visible { "eye" } else { "eye-off" }).on_click({
+                        let document = document.clone();
+                        let canvas = canvas.clone();
+                        move || {
+                            if document.update(|document| document.toggle_layer_visibility(index)) {
+                                clear_canvas_selection(&canvas);
+                            }
+                        }
+                    }),
+                )
+                .child(icon_button::view("pencil").on_click({
                     let document = document.clone();
                     let canvas = canvas.clone();
+                    let name = bindings.layer_name.clone();
+                    let modal = bindings.layer_name_settings.clone();
                     move || {
                         document.update(|document| document.select_layer(index));
-                        let mut canvas = canvas.get_mut();
-                        canvas.active_pen_path = None;
-                        canvas.selected_nodes.clear();
-                        canvas.hovered_node = None;
-                        canvas.hovered_segment = None;
+                        clear_canvas_selection(&canvas);
+                        name.set(layer_name.clone());
+                        modal.open();
                     }
-                })
+                }))
         })
         .collect::<Vec<_>>();
     let editing_fill = !painting_blob
@@ -129,36 +150,17 @@ pub fn view(
         .children(layer_rows)
         .child(
             HStack::new()
-                .gap(StackGap::Small)
-                .child(Button::new("Add Layer").on_click({
+                .gap(StackGap::ExtraSmall)
+                .child(icon_button::view("plus").on_click({
                     let document = document.clone();
                     let canvas = canvas.clone();
                     move || {
                         document.update(Document::add_layer);
-                        let mut canvas = canvas.get_mut();
-                        canvas.active_pen_path = None;
-                        canvas.selected_nodes.clear();
-                        canvas.hovered_node = None;
-                        canvas.hovered_segment = None;
+                        clear_canvas_selection(&canvas);
                     }
                 }))
                 .child(
-                    Button::new("Rename")
-                        .enabled(selected_layer_name.is_some())
-                        .on_click({
-                            let name = bindings.layer_name.clone();
-                            let modal = bindings.layer_name_settings.clone();
-                            move || {
-                                if let Some(selected_layer_name) = selected_layer_name.as_ref() {
-                                    name.set(selected_layer_name.clone());
-                                    modal.open();
-                                }
-                            }
-                        }),
-                )
-                .child(
-                    Button::new("Delete")
-                        .style(ButtonStyle::Danger)
+                    icon_button::view("trash-2")
                         .enabled(current_document.layers().len() > 1)
                         .on_click({
                             let document = document.clone();
@@ -173,29 +175,9 @@ pub fn view(
                                 }
                             }
                         }),
-                ),
-        )
-        .child(
-            HStack::new()
-                .gap(StackGap::Small)
-                .child(
-                    Button::new(if selected_layer_visible {
-                        "Hide"
-                    } else {
-                        "Show"
-                    })
-                    .on_click({
-                        let document = document.clone();
-                        let canvas = canvas.clone();
-                        move || {
-                            if document.update(Document::toggle_selected_layer_visibility) {
-                                clear_canvas_selection(&canvas);
-                            }
-                        }
-                    }),
                 )
                 .child(
-                    Button::new("Move Up")
+                    icon_button::view("arrow-up")
                         .enabled(
                             selected_layer
                                 .is_some_and(|index| index + 1 < current_document.layers().len()),
@@ -211,13 +193,31 @@ pub fn view(
                         }),
                 )
                 .child(
-                    Button::new("Move Down")
+                    icon_button::view("arrow-down")
                         .enabled(selected_layer.is_some_and(|index| index > 0))
                         .on_click({
                             let document = document.clone();
                             let canvas = canvas.clone();
                             move || {
                                 if document.update(Document::move_selected_layer_down) {
+                                    clear_canvas_selection(&canvas);
+                                }
+                            }
+                        }),
+                )
+                .child(
+                    icon_button::view("link-2")
+                        .style(if selected_layer_clipped {
+                            ButtonStyle::Standard
+                        } else {
+                            ButtonStyle::Ghost
+                        })
+                        .enabled(selected_layer.is_some_and(|index| index > 0))
+                        .on_click({
+                            let document = document.clone();
+                            let canvas = canvas.clone();
+                            move || {
+                                if document.update(Document::toggle_selected_layer_clipping) {
                                     clear_canvas_selection(&canvas);
                                 }
                             }
@@ -273,7 +273,7 @@ pub fn view(
                     }
                 }
             }))
-            .child(Button::new("No Fill").on_click({
+            .child(icon_button::view("circle-off").on_click({
                 let fill_color = bindings.fill_color.clone();
                 let document = document.clone();
                 let active_tool = active_tool.clone();

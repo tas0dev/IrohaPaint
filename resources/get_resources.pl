@@ -12,6 +12,8 @@ my $base_url =
 my @icons = (
 	'mouse-pointer-2',
 	'pen-tool',
+	'spline',
+	'slash',
 	'square',
 	'circle',
 	'layers',
@@ -31,6 +33,14 @@ my @icons = (
 	'droplet',
 	'paint-bucket',
 	'eraser',
+	'pencil',
+	'arrow-up',
+	'arrow-down',
+	'link-2',
+	'circle-off',
+	'check',
+	'x',
+	'refresh-cw',
 );
 
 make_path($output_dir);

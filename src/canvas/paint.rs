@@ -72,9 +72,73 @@ pub fn paint_editor_canvas(
             .push(DrawCommand::PushClip { rect: artboard });
     }
 
-    for layer in document.layers() {
+    let clipped_draft = match interaction {
+        Interaction::DrawingShape {
+            kind,
+            start,
+            current,
+            style,
+        } => Some(match kind {
+            ShapeDraftKind::Rectangle => ObjectKind::Rectangle {
+                bounds: DocumentRect::from_points(*start, *current),
+                style: *style,
+            },
+            ShapeDraftKind::Ellipse => ObjectKind::Ellipse {
+                bounds: DocumentRect::from_points(*start, *current),
+                style: *style,
+            },
+        }),
+        Interaction::DrawingPencil {
+            preview: Some(path),
+            brush,
+            ..
+        } => Some(ObjectKind::Path {
+            path: path.clone(),
+            style: ObjectStyle {
+                stroke: brush.stroke_style(),
+                ..ObjectStyle::default()
+            },
+            variable_width: true,
+            cutouts: Vec::new(),
+        }),
+        Interaction::DrawingBlob {
+            preview: Some(path),
+            style,
+            ..
+        } => Some(ObjectKind::Path {
+            path: path.clone(),
+            style: *style,
+            variable_width: false,
+            cutouts: Vec::new(),
+        }),
+        _ => None,
+    };
+    let mut serialized_draft = false;
+    for (layer_index, layer) in document.layers().iter().enumerate() {
         if !layer.is_visible() {
             continue;
+        }
+        if document.clip_base_layer(layer_index).is_some() {
+            let preview = layer.objects().iter().find_map(|object| {
+                interaction
+                    .preview_kind(object.id())
+                    .map(|kind| (object.id(), kind))
+            });
+            let extra = (document.selected_layer() == Some(layer_index))
+                .then_some(clipped_draft.as_ref())
+                .flatten();
+            if paint_clipped_layer(
+                document,
+                layer_index,
+                preview.as_ref().map(|(id, kind)| (*id, kind)),
+                extra,
+                transform,
+                bounds,
+                context,
+            ) {
+                serialized_draft |= extra.is_some();
+                continue;
+            }
         }
         paint_raster_layer(layer.paint(), transform, bounds, context);
         for object in layer.objects() {
@@ -86,7 +150,9 @@ pub fn paint_editor_canvas(
         }
     }
 
-    paint_draft(interaction, transform, bounds, context);
+    if !serialized_draft {
+        paint_draft(interaction, transform, bounds, context);
+    }
 
     if let Some((position, width)) = nodes.brush_cursor {
         let radius = (width * transform.zoom() * 0.5).max(1.0);
@@ -160,6 +226,43 @@ pub fn paint_editor_canvas(
     }
 
     context.display_list.push(DrawCommand::PopClip);
+}
+
+fn paint_clipped_layer(
+    document: &Document,
+    layer_index: usize,
+    preview: Option<(ObjectId, &ObjectKind)>,
+    extra: Option<&ObjectKind>,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    context: &mut PaintContext<'_>,
+) -> bool {
+    let top_left = transform.canvas_to_document(canvas_bounds.origin, canvas_bounds);
+    let bottom_right = transform.canvas_to_document(
+        Point::new(
+            canvas_bounds.origin.x + canvas_bounds.size.width,
+            canvas_bounds.origin.y + canvas_bounds.size.height,
+        ),
+        canvas_bounds,
+    );
+    let viewport = DocumentRect::from_points(top_left, bottom_right);
+    let Ok(source) =
+        crate::export::serialize_layer_for_canvas(document, layer_index, viewport, preview, extra)
+    else {
+        return false;
+    };
+    let Ok(svg) = SvgData::decode(source.as_bytes()) else {
+        return false;
+    };
+    context.display_list.push(DrawCommand::DrawSvg {
+        command: SvgCommand {
+            svg,
+            bounds: canvas_bounds,
+            opacity: 1.0,
+            tint: None,
+        },
+    });
+    true
 }
 
 fn paint_raster_layer(

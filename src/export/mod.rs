@@ -8,6 +8,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::document::Document;
+use crate::document::{DocumentRect, ObjectId, ObjectKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -79,4 +80,14 @@ pub fn export_with_dialog(document: &Document, format: ExportFormat) -> Result<b
         }
     }
     Ok(true)
+}
+
+pub(crate) fn serialize_layer_for_canvas(
+    document: &Document,
+    layer_index: usize,
+    viewport: DocumentRect,
+    preview: Option<(ObjectId, &ObjectKind)>,
+    extra: Option<&ObjectKind>,
+) -> Result<String, ExportError> {
+    svg::serialize_layer(document, layer_index, viewport, preview, extra)
 }

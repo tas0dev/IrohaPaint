@@ -5,9 +5,21 @@ use crate::document::{
 use super::interaction::ResizeHandle;
 
 pub fn object_at(document: &Document, point: DocumentPoint, tolerance: f32) -> Option<ObjectId> {
-    let layer = document.layers().get(document.selected_layer()?)?;
+    let layer_index = document.selected_layer()?;
+    let layer = document.layers().get(layer_index)?;
     if !layer.is_visible() {
         return None;
+    }
+    if let Some(base_index) = document.clip_base_layer(layer_index) {
+        let base = document.layers().get(base_index)?;
+        if !base.is_visible()
+            || !base
+                .objects()
+                .iter()
+                .any(|object| kind_has_alpha_at(object.kind(), point))
+        {
+            return None;
+        }
     }
     layer
         .objects()
@@ -15,6 +27,45 @@ pub fn object_at(document: &Document, point: DocumentPoint, tolerance: f32) -> O
         .rev()
         .find(|object| kind_contains(object.kind(), point, tolerance))
         .map(|object| object.id())
+}
+
+fn kind_has_alpha_at(kind: &ObjectKind, point: DocumentPoint) -> bool {
+    match kind {
+        ObjectKind::Rectangle { bounds, style } => {
+            (style.fill.alpha > 0 && bounds.contains(point))
+                || (style.stroke.color.alpha > 0
+                    && rectangle_stroke_contains(*bounds, point, style.stroke.width * 0.5))
+        }
+        ObjectKind::Ellipse { bounds, style } => {
+            (style.fill.alpha > 0 && ellipse_contains(*bounds, point, 0.0))
+                || (style.stroke.color.alpha > 0
+                    && ellipse_stroke_contains(*bounds, point, style.stroke.width * 0.5))
+        }
+        ObjectKind::Path {
+            path,
+            style,
+            cutouts,
+            ..
+        } => {
+            !cutouts
+                .iter()
+                .any(|cutout| filled_path_contains(cutout, point))
+                && ((path.is_closed() && style.fill.alpha > 0 && filled_path_contains(path, point))
+                    || (style.stroke.color.alpha > 0
+                        && bezier_path_contains(path, point, style.stroke.width * 0.5)))
+        }
+    }
+}
+
+fn rectangle_stroke_contains(bounds: DocumentRect, point: DocumentPoint, half_width: f32) -> bool {
+    let outer = expanded(bounds, half_width.max(0.0));
+    let inner = expanded(bounds, -half_width.max(0.0));
+    outer.contains(point) && (inner.width <= 0.0 || inner.height <= 0.0 || !inner.contains(point))
+}
+
+fn ellipse_stroke_contains(bounds: DocumentRect, point: DocumentPoint, half_width: f32) -> bool {
+    ellipse_contains(bounds, point, half_width.max(0.0))
+        && !ellipse_contains(bounds, point, -half_width.max(0.0))
 }
 
 pub fn fill_object_at(document: &Document, point: DocumentPoint) -> Option<(usize, ObjectId)> {

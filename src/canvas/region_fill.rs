@@ -43,7 +43,11 @@ pub fn region_at(document: &Document, point: DocumentPoint) -> Option<BezierPath
 
 fn boundary_segments(document: &Document) -> Vec<Segment> {
     let mut segments = Vec::new();
-    for layer in document.layers().iter().filter(|layer| layer.is_visible()) {
+    for layer in document
+        .layers()
+        .iter()
+        .filter(|layer| layer.is_visible() && !layer.is_clipped())
+    {
         for object in layer.objects() {
             match object.kind() {
                 ObjectKind::Path {
