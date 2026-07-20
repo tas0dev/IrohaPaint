@@ -3,6 +3,8 @@ mod path_edit;
 mod path_erase;
 mod stroke_outline;
 
+const FILL_BLEED_WIDTH: f32 = 2.0;
+
 pub(crate) use paint_layer::{PAINT_TILE_SIZE, PaintDab, PaintLayer};
 use path_edit::simplification_candidates;
 use path_erase::{erase_path, eraser_cutout};
@@ -679,8 +681,8 @@ impl Document {
         let source = self.layers[source_layer].objects[object_index].kind.clone();
         let style = ObjectStyle {
             stroke: StrokeStyle {
-                color: DocumentColor::TRANSPARENT,
-                width: 0.1,
+                color,
+                width: FILL_BLEED_WIDTH,
                 ..StrokeStyle::default()
             },
             fill: color,
@@ -803,6 +805,20 @@ impl Document {
             variable_width: false,
             cutouts: Vec::new(),
         })
+    }
+
+    pub fn add_fill_region(&mut self, path: BezierPath, color: DocumentColor) -> ObjectId {
+        self.add_styled_path(
+            path,
+            ObjectStyle {
+                stroke: StrokeStyle {
+                    color,
+                    width: FILL_BLEED_WIDTH,
+                    ..StrokeStyle::default()
+                },
+                fill: color,
+            },
+        )
     }
 
     pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {

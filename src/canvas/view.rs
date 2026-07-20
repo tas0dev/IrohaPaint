@@ -16,6 +16,7 @@ use super::hit_test::{
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::{NodePresentation, paint_editor_canvas};
 use super::raster_stroke::interpolate_dabs;
+use super::region_fill;
 use super::state::CanvasController;
 use super::stroke::{fit_blob_stroke, fit_pencil_stroke};
 
@@ -288,6 +289,16 @@ impl EditorCanvas {
                     state.selected_nodes.clear();
                     state.hovered_node = None;
                     state.hovered_segment = None;
+                } else {
+                    let region = {
+                        let document = self.document.get();
+                        region_fill::region_at(&document, document_point)
+                    };
+                    if let Some(path) = region {
+                        let color = self.brushes.get().active().color;
+                        self.document
+                            .update(|document| document.add_fill_region(path, color));
+                    }
                 }
             }
             EditorTool::Eraser => {

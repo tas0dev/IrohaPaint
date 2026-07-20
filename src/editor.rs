@@ -30,11 +30,10 @@ impl EraserMode {
 }
 
 impl EditorTool {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Select,
         Self::NodeEdit,
         Self::Pencil,
-        Self::Paint,
         Self::Fill,
         Self::Eraser,
         Self::BlobBrush,
