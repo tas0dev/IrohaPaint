@@ -1,10 +1,10 @@
 use viewkit::prelude::*;
 
+use super::icon_button;
 use crate::brush::{BrushKind, BrushLibrary};
 use crate::canvas::CanvasController;
 use crate::document::{Document, DocumentColor, NodeKind, ObjectId};
 use crate::editor::EditorTool;
-use super::icon_button;
 
 pub struct InspectorBindings {
     pub stroke_color: State<Color>,
@@ -86,21 +86,91 @@ pub fn view(
         .iter()
         .enumerate()
         .rev()
+        .filter(|(_, layer)| {
+            layer.folder().is_none_or(|id| {
+                current_document
+                    .folders()
+                    .iter()
+                    .find(|folder| folder.id() == id)
+                    .is_none_or(|folder| folder.is_expanded())
+            })
+        })
         .map(|(index, layer)| {
             let layer_name = layer.name().to_owned();
             let visible = layer.is_visible();
+            let folder_name = layer.folder().and_then(|id| {
+                current_document
+                    .folders()
+                    .iter()
+                    .find(|folder| folder.id() == id)
+                    .map(|folder| folder.name().to_owned())
+            });
+            let mut list_row = ListRow::new(layer_name.clone());
+            if let Some(folder_name) = folder_name {
+                list_row = list_row.subtitle(folder_name);
+            }
+            let mut row = HStack::new()
+                .alignment(StackAlignment::Center)
+                .gap(StackGap::ExtraSmall);
+            if let Some(preview) = layer_preview(&current_document, index) {
+                row = row.child(preview.frame(32.0, 32.0));
+            }
+            row.child(
+                list_row
+                    .selected(selected_layer == Some(index))
+                    .on_select({
+                        let document = document.clone();
+                        let canvas = canvas.clone();
+                        move || {
+                            document.update(|document| document.select_layer(index));
+                            clear_canvas_selection(&canvas);
+                        }
+                    })
+                    .layout()
+                    .flex_grow(1.0),
+            )
+            .child(
+                icon_button::view(if visible { "eye" } else { "eye-off" }).on_click({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        if document.update(|document| document.toggle_layer_visibility(index)) {
+                            clear_canvas_selection(&canvas);
+                        }
+                    }
+                }),
+            )
+            .child(icon_button::view("pencil").on_click({
+                let document = document.clone();
+                let canvas = canvas.clone();
+                let name = bindings.layer_name.clone();
+                let modal = bindings.layer_name_settings.clone();
+                move || {
+                    document.update(|document| document.select_layer(index));
+                    clear_canvas_selection(&canvas);
+                    name.set(layer_name.clone());
+                    modal.open();
+                }
+            }))
+        })
+        .collect::<Vec<_>>();
+    let folder_rows = current_document
+        .folders()
+        .iter()
+        .map(|folder| {
+            let id = folder.id();
+            let visible = folder.is_visible();
+            let expanded = folder.is_expanded();
             HStack::new()
                 .alignment(StackAlignment::Center)
                 .gap(StackGap::ExtraSmall)
                 .child(
-                    ListRow::new(layer_name.clone())
-                        .selected(selected_layer == Some(index))
+                    ListRow::new(folder.name())
+                        .subtitle(if expanded { "Expanded" } else { "Collapsed" })
                         .on_select({
                             let document = document.clone();
-                            let canvas = canvas.clone();
                             move || {
-                                document.update(|document| document.select_layer(index));
-                                clear_canvas_selection(&canvas);
+                                document.update(|document| document.toggle_folder_expanded(id));
                             }
                         })
                         .layout()
@@ -111,24 +181,12 @@ pub fn view(
                         let document = document.clone();
                         let canvas = canvas.clone();
                         move || {
-                            if document.update(|document| document.toggle_layer_visibility(index)) {
+                            if document.update(|document| document.toggle_folder_visibility(id)) {
                                 clear_canvas_selection(&canvas);
                             }
                         }
                     }),
                 )
-                .child(icon_button::view("pencil").on_click({
-                    let document = document.clone();
-                    let canvas = canvas.clone();
-                    let name = bindings.layer_name.clone();
-                    let modal = bindings.layer_name_settings.clone();
-                    move || {
-                        document.update(|document| document.select_layer(index));
-                        clear_canvas_selection(&canvas);
-                        name.set(layer_name.clone());
-                        modal.open();
-                    }
-                }))
         })
         .collect::<Vec<_>>();
     let editing_fill = !painting_blob
@@ -147,6 +205,7 @@ pub fn view(
         .gap(StackGap::Medium)
         .child(Text::new("Layers").weight(700))
         .child(Divider::new())
+        .children(folder_rows)
         .children(layer_rows)
         .child(
             HStack::new()
@@ -157,6 +216,15 @@ pub fn view(
                     move || {
                         document.update(Document::add_layer);
                         clear_canvas_selection(&canvas);
+                    }
+                }))
+                .child(icon_button::view("layers").on_click({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        if document.update(Document::create_folder_from_selected) {
+                            clear_canvas_selection(&canvas);
+                        }
                     }
                 }))
                 .child(
@@ -515,4 +583,27 @@ fn clear_canvas_selection(canvas: &CanvasController) {
     canvas.selected_nodes.clear();
     canvas.hovered_node = None;
     canvas.hovered_segment = None;
+}
+
+fn layer_preview(document: &Document, layer_index: usize) -> Option<Image> {
+    let crate::document::CanvasSize::Custom { width, height } = document.properties().canvas_size
+    else {
+        return None;
+    };
+    let source = crate::export::serialize_layer_content_for_canvas(
+        document,
+        layer_index,
+        crate::document::DocumentRect {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        },
+        None,
+        None,
+    )
+    .ok()?;
+    let svg = SvgData::decode(source.as_bytes()).ok()?;
+    let image = ImageData::from_svg(&svg, 64, 64).ok()?;
+    Some(Image::new(image))
 }

@@ -2,7 +2,7 @@ use viewkit::prelude::*;
 
 use super::icon_button;
 use crate::brush::{BrushDefinition, BrushKind, BrushLibrary, BrushTip};
-use crate::document::{CanvasSize, Document, DocumentColor};
+use crate::document::{CanvasSize, Document, DocumentColor, StrokeCap};
 use crate::editor::EditorTool;
 
 pub struct DocumentSettingsBindings {
@@ -142,7 +142,8 @@ pub fn brush_settings(
                 .alignment(StackAlignment::Stretch)
                 .gap(StackGap::Medium)
                 .child(Text::new("Brush Settings").weight(700))
-                .child(Text::new(active.name))
+                .child(Text::new(active.name.clone()))
+                .child(brush_preview(&active).frame(240.0, 72.0))
                 .child(Divider::new())
                 .child(Text::new("Tip").weight(700))
                 .child(Text::new(tip_description))
@@ -259,4 +260,33 @@ fn brush_button(
     Button::new(title).on_click(move || {
         brushes.update(|library| library.update_active(kind, |brush| update(brush)));
     })
+}
+
+fn brush_preview(brush: &BrushDefinition) -> Svg {
+    let width = match brush.kind {
+        BrushKind::Line => brush.width,
+        BrushKind::Paint => brush.paint_width,
+    }
+    .clamp(1.0, 36.0);
+    let cap = match brush.cap {
+        StrokeCap::Butt => "butt",
+        StrokeCap::Round => "round",
+        StrokeCap::Square => "square",
+    };
+    let (roundness, angle) = match brush.tip {
+        BrushTip::Round => (1.0, 0.0),
+        BrushTip::Ellipse { roundness, angle } => (roundness.clamp(0.05, 1.0), angle),
+    };
+    let color = format!(
+        "#{:02X}{:02X}{:02X}",
+        brush.color.red, brush.color.green, brush.color.blue
+    );
+    let source = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72" viewBox="0 0 240 72"><path d="M12 48 C64 8 150 62 228 24" fill="none" stroke="{color}" stroke-opacity="{opacity:.3}" stroke-width="{width:.3}" stroke-linecap="{cap}"/><ellipse cx="24" cy="18" rx="{tip_rx:.3}" ry="{tip_ry:.3}" transform="rotate({angle:.3} 24 18)" fill="{color}" fill-opacity="{opacity:.3}"/></svg>"#,
+        opacity = brush.color.alpha as f32 / 255.0,
+        tip_rx = width * 0.5,
+        tip_ry = width * roundness * 0.5,
+    );
+    let svg = SvgData::decode(source.as_bytes()).expect("brush preview SVG is valid");
+    Svg::new(svg)
 }

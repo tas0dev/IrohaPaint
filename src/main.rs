@@ -5,6 +5,7 @@ pub mod document;
 mod editor;
 mod export;
 mod icons;
+mod reference;
 mod views;
 
 use app::IrohaPaint;

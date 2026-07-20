@@ -231,7 +231,7 @@ fn append_round_cap(
         }
         let amount = step as f32 / CAP_STEPS as f32;
         let angle = if start {
-            angle + std::f32::consts::PI * (1.0 + amount)
+            angle + std::f32::consts::PI * (1.0 - amount)
         } else {
             angle - std::f32::consts::PI * amount
         };

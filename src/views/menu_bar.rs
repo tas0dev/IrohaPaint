@@ -2,6 +2,7 @@ use viewkit::prelude::*;
 
 use crate::document::Document;
 use crate::export;
+use crate::{canvas::CanvasController, reference};
 
 pub fn view(
     document: State<Document>,
@@ -38,6 +39,7 @@ pub fn view(
 
 pub fn file_menu(
     document: State<Document>,
+    canvas: CanvasController,
     export_status: State<String>,
     document_settings: ModalState,
 ) -> Menu {
@@ -45,6 +47,21 @@ pub fn file_menu(
         .item(MenuItem::new("Document Properties…").on_select(move || {
             document_settings.open();
         }))
+        .item(MenuItem::new("Import Reference Image…").on_select({
+            let document = document.clone();
+            let canvas = canvas.clone();
+            let export_status = export_status.clone();
+            move || match reference::import_with_dialog(&canvas, &document.get()) {
+                Ok(true) => export_status.set(String::from("Reference image imported")),
+                Ok(false) => {}
+                Err(error) => export_status.set(format!("Import failed: {error}")),
+            }
+        }))
+        .item(
+            MenuItem::new("Remove Reference Image")
+                .enabled(canvas.has_reference_image())
+                .on_select(move || canvas.remove_reference_image()),
+        )
         .separator()
         .item(export_item(
             "Export SVG",

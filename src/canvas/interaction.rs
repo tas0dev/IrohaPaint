@@ -61,6 +61,7 @@ pub enum Interaction {
     },
     DrawingPencil {
         raw_points: Vec<DocumentPoint>,
+        raw_pressures: Vec<f32>,
         preview: Option<BezierPath>,
         brush: BrushDefinition,
     },
@@ -81,6 +82,7 @@ pub enum Interaction {
     },
     DrawingBlob {
         raw_points: Vec<DocumentPoint>,
+        raw_pressures: Vec<f32>,
         preview: Option<BezierPath>,
         style: ObjectStyle,
         smoothing: f32,

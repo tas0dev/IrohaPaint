@@ -50,6 +50,9 @@ pub enum PlatformEvent {
         x: f32,
         y: f32,
     },
+    PointerPressureChanged {
+        pressure: f32,
+    },
     PointerButton {
         button: PointerButton,
         state: ButtonState,

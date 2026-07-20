@@ -7,12 +7,12 @@ use super::interaction::ResizeHandle;
 pub fn object_at(document: &Document, point: DocumentPoint, tolerance: f32) -> Option<ObjectId> {
     let layer_index = document.selected_layer()?;
     let layer = document.layers().get(layer_index)?;
-    if !layer.is_visible() {
+    if !document.layer_is_visible(layer_index) {
         return None;
     }
     if let Some(base_index) = document.clip_base_layer(layer_index) {
         let base = document.layers().get(base_index)?;
-        if !base.is_visible()
+        if !document.layer_is_visible(base_index)
             || !base
                 .objects()
                 .iter()
@@ -74,7 +74,7 @@ pub fn fill_object_at(document: &Document, point: DocumentPoint) -> Option<(usiz
         .iter()
         .enumerate()
         .rev()
-        .filter(|(_, layer)| layer.is_visible())
+        .filter(|(index, _)| document.layer_is_visible(*index))
         .find_map(|(layer_index, layer)| {
             layer
                 .objects()

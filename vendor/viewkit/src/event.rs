@@ -14,6 +14,10 @@ pub enum ViewEvent {
         position: Point,
     },
 
+    PointerPressureChanged {
+        pressure: f32,
+    },
+
     PointerPressed {
         position: Point,
         button: PointerButton,
@@ -79,6 +83,7 @@ impl ViewEvent {
             | Self::PointerFocusRequested { position } => Some(*position),
 
             Self::PointerLeft
+            | Self::PointerPressureChanged { .. }
             | Self::TextInput { .. }
             | Self::KeyInput { .. }
             | Self::ModifiersChanged { .. }
@@ -111,6 +116,7 @@ impl ViewEvent {
                 | Self::PointerReleased { .. }
                 | Self::PointerFocusRequested { .. }
                 | Self::PointerLeft
+                | Self::PointerPressureChanged { .. }
                 | Self::TextInput { .. }
                 | Self::KeyInput { .. }
                 | Self::ModifiersChanged { .. }
@@ -291,6 +297,12 @@ impl EventDispatcher {
                 self.pointer_position = Some(position);
 
                 Some(ViewEvent::PointerMoved { position })
+            }
+
+            PlatformEvent::PointerPressureChanged { pressure } => {
+                Some(ViewEvent::PointerPressureChanged {
+                    pressure: pressure.clamp(0.0, 1.0),
+                })
             }
 
             PlatformEvent::PointerButton { button, state } => {

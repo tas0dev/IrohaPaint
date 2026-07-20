@@ -1,15 +1,24 @@
 use crate::document::{BezierNode, BezierPath, DocumentPoint, NodeKind};
 
-pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<BezierPath> {
-    fit_centerline(points, tolerance, true)
+pub fn fit_pencil_stroke(
+    points: &[DocumentPoint],
+    pressures: &[f32],
+    tolerance: f32,
+) -> Option<BezierPath> {
+    fit_centerline(points, Some(pressures), tolerance, true)
 }
 
-pub fn fit_paint_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<BezierPath> {
-    fit_centerline(points, tolerance, false)
+pub fn fit_paint_stroke(
+    points: &[DocumentPoint],
+    pressures: &[f32],
+    tolerance: f32,
+) -> Option<BezierPath> {
+    fit_centerline(points, Some(pressures), tolerance, true)
 }
 
 fn fit_centerline(
     points: &[DocumentPoint],
+    pressures: Option<&[f32]>,
     tolerance: f32,
     variable_width: bool,
 ) -> Option<BezierPath> {
@@ -29,7 +38,7 @@ fn fit_centerline(
     if simplified.len() < 2 {
         return None;
     }
-    let widths = variable_width.then(|| velocity_widths(points, tolerance));
+    let widths = variable_width.then(|| stroke_widths(points, pressures, tolerance));
 
     let last_index = simplified.len() - 1;
     let nodes = simplified
@@ -73,14 +82,21 @@ fn fit_centerline(
     BezierPath::from_nodes(nodes)
 }
 
-fn velocity_widths(points: &[DocumentPoint], tolerance: f32) -> Vec<f32> {
+fn stroke_widths(points: &[DocumentPoint], pressures: Option<&[f32]>, tolerance: f32) -> Vec<f32> {
     let scale = tolerance.max(0.01) * 2.5;
     let raw = (0..points.len())
         .map(|index| {
             let previous = points[index.saturating_sub(1)];
             let next = points[(index + 1).min(points.len() - 1)];
             let velocity = distance(previous, next) / scale;
-            (1.0 / (1.0 + velocity * 0.22)).clamp(0.12, 1.0)
+            let velocity_width = (1.0 / (1.0 + velocity * 0.22)).clamp(0.12, 1.0);
+            let pressure = pressures
+                .and_then(|pressures| pressures.get(index))
+                .copied()
+                .unwrap_or(1.0)
+                .clamp(0.05, 1.0)
+                .powf(0.65);
+            (pressure * (0.75 + velocity_width * 0.25)).clamp(0.05, 1.0)
         })
         .collect::<Vec<_>>();
     if raw.len() < 3 {

@@ -236,10 +236,13 @@ impl EditorCanvas {
                     return;
                 }
                 let brush = self.brushes.get().active(BrushKind::Line).clone();
+                let pressure = self.controller.get().pointer_pressure.unwrap_or(1.0);
                 self.controller.get_mut().interaction = Interaction::DrawingPencil {
                     raw_points: vec![document_point],
+                    raw_pressures: vec![pressure],
                     preview: fit_pencil_stroke(
                         &[document_point],
+                        &[pressure],
                         brush.fitting_tolerance(transform.zoom()),
                     ),
                     brush,
@@ -340,10 +343,13 @@ impl EditorCanvas {
                 let brush = self.brushes.get().active(BrushKind::Paint).clone();
                 let width = self.bindings.blob_width.get();
                 let style = paint_brush_style(&brush, width);
+                let pressure = self.controller.get().pointer_pressure.unwrap_or(1.0);
                 self.controller.get_mut().interaction = Interaction::DrawingBlob {
                     raw_points: vec![document_point],
+                    raw_pressures: vec![pressure],
                     preview: fit_paint_stroke(
                         &[document_point],
+                        &[pressure],
                         brush.fitting_tolerance(transform.zoom()),
                     ),
                     style,
@@ -404,6 +410,7 @@ impl EditorCanvas {
         let inside_drawing_bounds =
             drawing_bounds.is_none_or(|drawing_bounds| drawing_bounds.contains(document_point));
         let modifiers = state.modifiers;
+        let pointer_pressure = state.pointer_pressure.unwrap_or(1.0);
 
         if let Interaction::Panning {
             start_canvas,
@@ -447,6 +454,7 @@ impl EditorCanvas {
             }
             Interaction::DrawingPencil {
                 raw_points,
+                raw_pressures,
                 preview,
                 brush,
             } => {
@@ -460,8 +468,12 @@ impl EditorCanvas {
                 });
                 if should_add {
                     raw_points.push(document_point);
-                    *preview =
-                        fit_pencil_stroke(raw_points, brush.fitting_tolerance(transform.zoom()));
+                    raw_pressures.push(pointer_pressure);
+                    *preview = fit_pencil_stroke(
+                        raw_points,
+                        raw_pressures,
+                        brush.fitting_tolerance(transform.zoom()),
+                    );
                 }
                 true
             }
@@ -566,6 +578,7 @@ impl EditorCanvas {
             }
             Interaction::DrawingBlob {
                 raw_points,
+                raw_pressures,
                 preview,
                 smoothing,
                 streamline,
@@ -581,11 +594,12 @@ impl EditorCanvas {
                 });
                 if should_add {
                     raw_points.push(document_point);
+                    raw_pressures.push(pointer_pressure);
                     let tolerance = (0.45
                         + smoothing.clamp(0.0, 1.0) * 1.35
                         + streamline.clamp(0.0, 1.0) * 0.9)
                         / transform.zoom().max(0.01);
-                    *preview = fit_paint_stroke(raw_points, tolerance);
+                    *preview = fit_paint_stroke(raw_points, raw_pressures, tolerance);
                 }
                 true
             }
@@ -648,7 +662,7 @@ impl EditorCanvas {
                 ..
             } => {
                 self.document
-                    .update(|document| document.add_styled_path(path, style));
+                    .update(|document| document.add_variable_width_path(path, style.stroke));
                 let mut state = self.controller.get_mut();
                 state.selected_nodes.clear();
                 state.active_pen_path = None;
@@ -915,6 +929,7 @@ impl View for EditorCanvas {
             &document,
             state.transform,
             &state.interaction,
+            state.reference_image.as_ref(),
             self.active_tool.get(),
             NodePresentation {
                 selected: &state.selected_nodes,
@@ -937,6 +952,10 @@ impl View for EditorCanvas {
         context: &mut EventContext<'_>,
     ) -> EventResult {
         match event {
+            ViewEvent::PointerPressureChanged { pressure } => {
+                self.controller.get_mut().pointer_pressure = Some(*pressure);
+                EventResult::Ignored
+            }
             ViewEvent::PointerPressed { position, button }
                 if bounds.contains(*position)
                     && *button == PointerButton::Primary

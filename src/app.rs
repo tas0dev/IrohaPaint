@@ -141,6 +141,7 @@ impl App for IrohaPaint {
             );
         let menu = menu_bar::file_menu(
             self.document.clone(),
+            self.canvas.clone(),
             self.export_status.clone(),
             self.document_settings.clone(),
         );

@@ -58,7 +58,7 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
     }
     let mut mask_id = 0_u64;
     for (layer_index, layer) in document.layers().iter().enumerate() {
-        if !layer.is_visible() {
+        if !document.layer_is_visible(layer_index) {
             continue;
         }
         let clip_id = if let Some(base_index) = document.clip_base_layer(layer_index) {
@@ -73,7 +73,7 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
                 height = bounds.height,
             );
             let base = &document.layers()[base_index];
-            if base.is_visible() {
+            if document.layer_is_visible(base_index) {
                 write_layer_mask_content(&mut source, base)?;
             }
             source.push_str("</mask></defs>");
@@ -202,8 +202,13 @@ fn write_layer_mask_content(
                     }
                     let _ = write!(
                         source,
-                        r#"<path d="{commands}" fill="white" fill-opacity="{:.3}" fill-rule="evenodd" stroke="none"/>"#,
-                        style.stroke.color.alpha as f32 / 255.0,
+                        r#"<path d="{commands}" fill="white" fill-opacity="{opacity:.3}" fill-rule="{fill_rule}" stroke="none"/>"#,
+                        opacity = style.stroke.color.alpha as f32 / 255.0,
+                        fill_rule = if path.is_closed() {
+                            "evenodd"
+                        } else {
+                            "nonzero"
+                        },
                     );
                 } else {
                     write_path_commands(&mut commands, path);
@@ -435,9 +440,14 @@ fn write_variable_stroke(source: &mut String, path: &BezierPath, stroke: StrokeS
     }
     let _ = write!(
         source,
-        r##"<path d="{commands}" fill="{color}" fill-opacity="{opacity:.3}" fill-rule="evenodd" stroke="none"/>"##,
+        r##"<path d="{commands}" fill="{color}" fill-opacity="{opacity:.3}" fill-rule="{fill_rule}" stroke="none"/>"##,
         color = color_hex(stroke.color),
         opacity = stroke.color.alpha as f32 / 255.0,
+        fill_rule = if path.is_closed() {
+            "evenodd"
+        } else {
+            "nonzero"
+        },
     );
 }
 
@@ -489,13 +499,13 @@ fn write_curve(
 fn artwork_bounds(document: &Document) -> Option<DocumentRect> {
     let mut bounds = None;
     for (index, layer) in document.layers().iter().enumerate() {
-        if !layer.is_visible() {
+        if !document.layer_is_visible(index) {
             continue;
         }
         let mut current = layer_bounds(layer);
         if let Some(base_index) = document.clip_base_layer(index) {
             let base = &document.layers()[base_index];
-            current = if base.is_visible() {
+            current = if document.layer_is_visible(base_index) {
                 current.and_then(|current| {
                     layer_bounds(base).and_then(|base| intersection(current, base))
                 })

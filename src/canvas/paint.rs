@@ -14,6 +14,7 @@ use crate::editor::EditorTool;
 use super::coordinates::CanvasTransform;
 use super::hit_test::SegmentHit;
 use super::interaction::{Interaction, ResizeHandle, ShapeDraftKind, kind_bounds};
+use super::state::ReferenceImage;
 
 const HANDLE_SIZE: f32 = 8.0;
 const CONTROL_HANDLE_SIZE: f32 = 6.0;
@@ -29,6 +30,7 @@ pub fn paint_editor_canvas(
     document: &Document,
     transform: CanvasTransform,
     interaction: &Interaction,
+    reference_image: Option<&ReferenceImage>,
     active_tool: EditorTool,
     nodes: NodePresentation<'_>,
     bounds: Rect,
@@ -72,6 +74,17 @@ pub fn paint_editor_canvas(
             .push(DrawCommand::PushClip { rect: artboard });
     }
 
+    if let Some(reference) = reference_image {
+        context.display_list.push(DrawCommand::DrawImage {
+            command: ImageCommand {
+                image: reference.image.clone(),
+                bounds: transform.document_rect_to_canvas(reference.bounds, bounds),
+                opacity: reference.opacity,
+                sampling: ImageSampling::Bicubic,
+            },
+        });
+    }
+
     let clipped_draft = match interaction {
         Interaction::DrawingShape {
             kind,
@@ -108,14 +121,14 @@ pub fn paint_editor_canvas(
         } => Some(ObjectKind::Path {
             path: path.clone(),
             style: *style,
-            variable_width: false,
+            variable_width: true,
             cutouts: Vec::new(),
         }),
         _ => None,
     };
     let mut serialized_draft = false;
     for (layer_index, layer) in document.layers().iter().enumerate() {
-        if !layer.is_visible() {
+        if !document.layer_is_visible(layer_index) {
             continue;
         }
         if document.clip_base_layer(layer_index).is_some() {
@@ -249,6 +262,9 @@ fn paint_clipped_layer(
     let Some(base_index) = document.clip_base_layer(layer_index) else {
         return false;
     };
+    if !document.layer_is_visible(base_index) {
+        return true;
+    }
     let layer_source = match crate::export::serialize_layer_content_for_canvas(
         document,
         layer_index,
@@ -437,10 +453,15 @@ fn paint_variable_stroke(
         stroke.color.red, stroke.color.green, stroke.color.blue
     );
     let svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="{color}" fill-opacity="{opacity}" fill-rule="evenodd" stroke="none"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="{color}" fill-opacity="{opacity}" fill-rule="{fill_rule}" stroke="none"/></svg>"##,
         width = svg_bounds.size.width.max(1.0),
         height = svg_bounds.size.height.max(1.0),
         opacity = stroke.color.alpha as f32 / 255.0,
+        fill_rule = if path.is_closed() {
+            "evenodd"
+        } else {
+            "nonzero"
+        },
     );
     let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
         return;
@@ -684,7 +705,7 @@ fn paint_draft(
             style,
             ..
         } => {
-            paint_svg_path(path, *style, transform, canvas_bounds, context, &[]);
+            paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
         }
         Interaction::PlacingPathNode {
             path_id: _none,

@@ -18,7 +18,7 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::error::{EventLoopError, OsError};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Force, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::CursorIcon as WinitCursorIcon;
@@ -370,6 +370,32 @@ where
                 });
             }
 
+            WindowEvent::Touch(touch) => {
+                let scale_factor = self
+                    .window
+                    .as_ref()
+                    .map(|window| window.scale_factor())
+                    .unwrap_or(1.0);
+                let (x, y) = physical_position_to_logical(touch.location, scale_factor);
+                let pressure = touch.force.map(normalized_force).unwrap_or(1.0);
+                self.emit(PlatformEvent::PointerPressureChanged { pressure });
+                self.emit(PlatformEvent::PointerMoved { x, y });
+                match touch.phase {
+                    TouchPhase::Started => self.emit(PlatformEvent::PointerButton {
+                        button: PointerButton::Primary,
+                        state: ButtonState::Pressed,
+                    }),
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        self.emit(PlatformEvent::PointerButton {
+                            button: PointerButton::Primary,
+                            state: ButtonState::Released,
+                        });
+                        self.emit(PlatformEvent::PointerPressureChanged { pressure: 1.0 });
+                    }
+                    TouchPhase::Moved => {}
+                }
+            }
+
             WindowEvent::MouseWheel { delta, .. } => {
                 self.flush_pending_pointer_move();
                 let scale_factor = self
@@ -554,6 +580,17 @@ fn convert_button_state(state: ElementState) -> ButtonState {
         ElementState::Pressed => ButtonState::Pressed,
 
         ElementState::Released => ButtonState::Released,
+    }
+}
+
+fn normalized_force(force: Force) -> f32 {
+    match force {
+        Force::Calibrated {
+            force,
+            max_possible_force,
+            ..
+        } => (force / max_possible_force.max(f64::EPSILON)).clamp(0.0, 1.0) as f32,
+        Force::Normalized(force) => force.clamp(0.0, 1.0) as f32,
     }
 }
 

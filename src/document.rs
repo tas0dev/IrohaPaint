@@ -426,6 +426,7 @@ pub struct Layer {
     paint: PaintLayer,
     visible: bool,
     clipped: bool,
+    folder: Option<FolderId>,
 }
 
 impl Layer {
@@ -436,6 +437,7 @@ impl Layer {
             paint: PaintLayer::default(),
             visible: true,
             clipped: false,
+            folder: None,
         }
     }
 
@@ -458,23 +460,60 @@ impl Layer {
     pub fn is_clipped(&self) -> bool {
         self.clipped
     }
+
+    pub fn folder(&self) -> Option<FolderId> {
+        self.folder
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FolderId(u64);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerFolder {
+    id: FolderId,
+    name: String,
+    visible: bool,
+    expanded: bool,
+}
+
+impl LayerFolder {
+    pub fn id(&self) -> FolderId {
+        self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct DocumentSnapshot {
     layers: Vec<Layer>,
+    folders: Vec<LayerFolder>,
     selected_layer: Option<usize>,
     selected_object: Option<ObjectId>,
     next_object_id: u64,
+    next_folder_id: u64,
     properties: DocumentProperties,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Document {
     layers: Vec<Layer>,
+    folders: Vec<LayerFolder>,
     selected_layer: Option<usize>,
     selected_object: Option<ObjectId>,
     next_object_id: u64,
+    next_folder_id: u64,
     undo_stack: Vec<DocumentSnapshot>,
     redo_stack: Vec<DocumentSnapshot>,
     properties: DocumentProperties,
@@ -484,9 +523,11 @@ impl Document {
     pub fn new() -> Self {
         Self {
             layers: vec![Layer::new("Layer 1")],
+            folders: Vec::new(),
             selected_layer: Some(0),
             selected_object: None,
             next_object_id: 1,
+            next_folder_id: 1,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             properties: DocumentProperties::default(),
@@ -495,6 +536,22 @@ impl Document {
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    pub fn folders(&self) -> &[LayerFolder] {
+        &self.folders
+    }
+
+    pub fn layer_is_visible(&self, index: usize) -> bool {
+        self.layers.get(index).is_some_and(|layer| {
+            layer.visible
+                && layer.folder.is_none_or(|folder_id| {
+                    self.folders
+                        .iter()
+                        .find(|folder| folder.id == folder_id)
+                        .is_none_or(|folder| folder.visible)
+                })
+        })
     }
 
     pub fn properties(&self) -> DocumentProperties {
@@ -551,7 +608,12 @@ impl Document {
         let index = self
             .selected_layer
             .map_or(self.layers.len(), |selected| selected + 1);
-        self.layers.insert(index, Layer::new(name));
+        let mut layer = Layer::new(name);
+        layer.folder = self
+            .selected_layer
+            .and_then(|selected| self.layers.get(selected))
+            .and_then(|layer| layer.folder);
+        self.layers.insert(index, layer);
         self.selected_layer = Some(index);
         self.selected_object = None;
         index
@@ -599,6 +661,53 @@ impl Document {
         self.record_change();
         self.layers[index].visible = !self.layers[index].visible;
         self.selected_object = None;
+        true
+    }
+
+    pub fn create_folder_from_selected(&mut self) -> bool {
+        let Some(layer_index) = self.selected_layer else {
+            return false;
+        };
+        if self.layers[layer_index].folder.is_some() {
+            return false;
+        }
+        self.record_change();
+        let id = FolderId(self.next_folder_id);
+        self.next_folder_id += 1;
+        let mut number = self.folders.len() + 1;
+        let name = loop {
+            let candidate = format!("Folder {number}");
+            if self.folders.iter().all(|folder| folder.name != candidate) {
+                break candidate;
+            }
+            number += 1;
+        };
+        self.folders.push(LayerFolder {
+            id,
+            name,
+            visible: true,
+            expanded: true,
+        });
+        self.layers[layer_index].folder = Some(id);
+        self.selected_object = None;
+        true
+    }
+
+    pub fn toggle_folder_visibility(&mut self, id: FolderId) -> bool {
+        let Some(index) = self.folders.iter().position(|folder| folder.id == id) else {
+            return false;
+        };
+        self.record_change();
+        self.folders[index].visible = !self.folders[index].visible;
+        self.selected_object = None;
+        true
+    }
+
+    pub fn toggle_folder_expanded(&mut self, id: FolderId) -> bool {
+        let Some(index) = self.folders.iter().position(|folder| folder.id == id) else {
+            return false;
+        };
+        self.folders[index].expanded = !self.folders[index].expanded;
         true
     }
 
@@ -1267,18 +1376,22 @@ impl Document {
     fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             layers: self.layers.clone(),
+            folders: self.folders.clone(),
             selected_layer: self.selected_layer,
             selected_object: self.selected_object,
             next_object_id: self.next_object_id,
+            next_folder_id: self.next_folder_id,
             properties: self.properties,
         }
     }
 
     fn restore(&mut self, snapshot: DocumentSnapshot) {
         self.layers = snapshot.layers;
+        self.folders = snapshot.folders;
         self.selected_layer = snapshot.selected_layer;
         self.selected_object = snapshot.selected_object;
         self.next_object_id = snapshot.next_object_id;
+        self.next_folder_id = snapshot.next_folder_id;
         self.properties = snapshot.properties;
     }
 }
