@@ -118,5 +118,5 @@ impl App for ScrollExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<ScrollExample>()
+    run::<ScrollExample>()
 }

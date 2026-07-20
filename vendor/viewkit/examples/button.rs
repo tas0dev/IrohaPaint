@@ -61,5 +61,5 @@ impl App for ButtonExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<ButtonExample>()
+    run::<ButtonExample>()
 }

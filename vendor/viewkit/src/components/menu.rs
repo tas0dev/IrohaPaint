@@ -166,7 +166,7 @@ impl MenuItem {
             let on_select = Rc::clone(on_select);
 
             button = button.on_click(move || {
-                (on_select.borrow_mut())();
+                on_select.borrow_mut()();
             });
         }
 

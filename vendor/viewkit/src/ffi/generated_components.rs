@@ -141,7 +141,7 @@ pub extern "C" fn vk_push_button(
             expect_no_children(children)?;
             let mut button = crate::components::Button::new(title)
                 .color(color)
-                .radius(crate::theme::CornerRadius::Custom(radius));
+                .radius(CornerRadius::Custom(radius));
             if action_id != 0 {
                 button = button.on_click(context.button_callback(node_id, action_id));
             }
@@ -195,10 +195,10 @@ pub extern "C" fn vk_begin_frame(
         let height = decode_layout_length(height)?;
         let factory: FfiViewFactory = Box::new(move |_node_id, children, _context| {
             let mut child = zero_or_one_stack_child(children)?;
-            if let crate::layout::LayoutLength::Fixed(width) = width {
+            if let LayoutLength::Fixed(width) = width {
                 child = child.width(width);
             }
-            if let crate::layout::LayoutLength::Fixed(height) = height {
+            if let LayoutLength::Fixed(height) = height {
                 child = child.height(height);
             }
             Ok(FfiBuiltView::StackChild(child))
@@ -730,7 +730,7 @@ pub extern "C" fn vk_push_text_field(
                 crate::components::TextField::new(value)
                     .placeholder(placeholder)
                     .size(size)
-                    .radius(crate::theme::CornerRadius::Custom(radius))
+                    .radius(CornerRadius::Custom(radius))
                     .enabled(enabled)
                     .invalid(invalid),
             )))

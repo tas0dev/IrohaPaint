@@ -9,11 +9,11 @@ use crate::view::{Constraints, MeasureContext, PaintContext, View};
 pub struct EmptyView;
 
 impl View for EmptyView {
-    fn paint(&self, _bounds: Rect, _context: &mut PaintContext<'_>) {}
-
     fn measure(&self, constraints: Constraints, _context: &mut MeasureContext<'_>) -> Size {
         constraints.constrain(Size::new(0.0, 0.0))
     }
+
+    fn paint(&self, _bounds: Rect, _context: &mut PaintContext<'_>) {}
 }
 
 pub struct Background<B = EmptyView, C = EmptyView> {
@@ -66,6 +66,10 @@ where
     B: View,
     C: View,
 {
+    fn measure(&self, constraints: Constraints, context: &mut MeasureContext<'_>) -> Size {
+        self.content.measure(constraints, context)
+    }
+
     fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>) {
         self.background.paint(bounds, context);
 
@@ -79,9 +83,5 @@ where
         context: &mut EventContext<'_>,
     ) -> EventResult {
         self.content.handle_event(bounds, event, context)
-    }
-
-    fn measure(&self, constraints: Constraints, context: &mut MeasureContext<'_>) -> Size {
-        self.content.measure(constraints, context)
     }
 }

@@ -57,5 +57,5 @@ impl App for BorderExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<BorderExample>()
+    run::<BorderExample>()
 }

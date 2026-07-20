@@ -56,5 +56,5 @@ impl App for TextFieldExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<TextFieldExample>()
+    run::<TextFieldExample>()
 }

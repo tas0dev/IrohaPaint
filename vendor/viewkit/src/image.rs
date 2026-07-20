@@ -117,7 +117,7 @@ impl ImageData {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ImageError> {
-        let image = ::image::load_from_memory(bytes)?.into_rgba8();
+        let image = image::load_from_memory(bytes)?.into_rgba8();
 
         let width = image.width();
         let height = image.height();
@@ -126,7 +126,7 @@ impl ImageData {
     }
 
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ImageError> {
-        let image = ::image::open(path)?.into_rgba8();
+        let image = image::open(path)?.into_rgba8();
 
         let width = image.width();
         let height = image.height();

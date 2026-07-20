@@ -95,6 +95,7 @@ pub struct Slider {
 
     label: Option<String>,
     enabled: bool,
+    on_commit: Option<Rc<RefCell<Box<dyn FnMut(f32)>>>>,
 
     interaction: SliderInteractionState,
 }
@@ -110,6 +111,7 @@ impl Slider {
 
             label: None,
             enabled: true,
+            on_commit: None,
 
             interaction: SliderInteractionState::new(),
         }
@@ -156,6 +158,11 @@ impl Slider {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
 
+        self
+    }
+
+    pub fn on_commit(mut self, callback: impl FnMut(f32) + 'static) -> Self {
+        self.on_commit = Some(Rc::new(RefCell::new(Box::new(callback))));
         self
     }
 
@@ -266,6 +273,13 @@ impl Slider {
         self.value.set_without_notification(value);
 
         true
+    }
+
+    fn commit_value(&self) {
+        self.value.commit();
+        if let Some(on_commit) = self.on_commit.as_ref() {
+            on_commit.borrow_mut()(self.current_value());
+        }
     }
 }
 
@@ -506,7 +520,7 @@ impl View for Slider {
 
                 self.update_from_pointer(bounds, position.x, drag_offset_x);
 
-                self.value.commit();
+                self.commit_value();
 
                 context.request_redraw_in(bounds.expanded(16.0));
 
@@ -544,7 +558,7 @@ impl View for Slider {
                 };
 
                 if was_dragging {
-                    self.value.commit();
+                    self.commit_value();
                 }
 
                 context.request_redraw_in(bounds.expanded(16.0));

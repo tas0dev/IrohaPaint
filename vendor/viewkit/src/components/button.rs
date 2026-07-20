@@ -463,6 +463,61 @@ impl Button {
 }
 
 impl View for Button {
+    fn measure(&self, constraints: Constraints, context: &mut MeasureContext<'_>) -> Size {
+        const HORIZONTAL_PADDING: f32 = 12.0;
+        const INTRINSIC_HEIGHT: f32 = 32.0;
+        const FONT_SIZE: f32 = 14.0;
+        const LINE_HEIGHT: f32 = 22.0;
+        const FONT_WEIGHT: u16 = 500;
+
+        let width_is_fixed = constraints.minimum.width.is_finite()
+            && constraints.maximum.width.is_finite()
+            && (constraints.maximum.width - constraints.minimum.width).abs() <= 0.001;
+
+        let height_is_fixed = constraints.minimum.height.is_finite()
+            && constraints.maximum.height.is_finite()
+            && (constraints.maximum.height - constraints.minimum.height).abs() <= 0.001;
+
+        if width_is_fixed && height_is_fixed {
+            return constraints.minimum;
+        }
+
+        if let Some(content) = self.content.as_ref() {
+            return content.measure(constraints, context);
+        }
+
+        let width = if width_is_fixed {
+            constraints.minimum.width
+        } else if let Some(label) = self.label.as_ref() {
+            let maximum_text_width = if constraints.maximum.width.is_finite() {
+                (constraints.maximum.width - HORIZONTAL_PADDING * 2.0).max(0.0)
+            } else {
+                f32::INFINITY
+            };
+
+            let measured = Text::new(label.as_str())
+                .font_size(FONT_SIZE)
+                .line_height(LINE_HEIGHT)
+                .weight(FONT_WEIGHT)
+                .measure(
+                    Constraints::loose(Size::new(maximum_text_width, f32::INFINITY)),
+                    context,
+                );
+
+            measured.width + HORIZONTAL_PADDING * 2.0
+        } else {
+            0.0
+        };
+
+        let height = if height_is_fixed {
+            constraints.minimum.height
+        } else {
+            INTRINSIC_HEIGHT
+        };
+
+        constraints.constrain(Size::new(width, height))
+    }
+
     fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>) {
         if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
             return;
@@ -635,7 +690,7 @@ impl View for Button {
 
                 if clicked {
                     if let Some(callback) = self.on_click.as_ref() {
-                        (callback.borrow_mut())();
+                        callback.borrow_mut()();
                     }
                 }
 
@@ -687,60 +742,5 @@ impl View for Button {
 
             _ => EventResult::Ignored,
         }
-    }
-
-    fn measure(&self, constraints: Constraints, context: &mut MeasureContext<'_>) -> Size {
-        const HORIZONTAL_PADDING: f32 = 12.0;
-        const INTRINSIC_HEIGHT: f32 = 32.0;
-        const FONT_SIZE: f32 = 14.0;
-        const LINE_HEIGHT: f32 = 22.0;
-        const FONT_WEIGHT: u16 = 500;
-
-        let width_is_fixed = constraints.minimum.width.is_finite()
-            && constraints.maximum.width.is_finite()
-            && (constraints.maximum.width - constraints.minimum.width).abs() <= 0.001;
-
-        let height_is_fixed = constraints.minimum.height.is_finite()
-            && constraints.maximum.height.is_finite()
-            && (constraints.maximum.height - constraints.minimum.height).abs() <= 0.001;
-
-        if width_is_fixed && height_is_fixed {
-            return constraints.minimum;
-        }
-
-        if let Some(content) = self.content.as_ref() {
-            return content.measure(constraints, context);
-        }
-
-        let width = if width_is_fixed {
-            constraints.minimum.width
-        } else if let Some(label) = self.label.as_ref() {
-            let maximum_text_width = if constraints.maximum.width.is_finite() {
-                (constraints.maximum.width - HORIZONTAL_PADDING * 2.0).max(0.0)
-            } else {
-                f32::INFINITY
-            };
-
-            let measured = Text::new(label.as_str())
-                .font_size(FONT_SIZE)
-                .line_height(LINE_HEIGHT)
-                .weight(FONT_WEIGHT)
-                .measure(
-                    Constraints::loose(Size::new(maximum_text_width, f32::INFINITY)),
-                    context,
-                );
-
-            measured.width + HORIZONTAL_PADDING * 2.0
-        } else {
-            0.0
-        };
-
-        let height = if height_is_fixed {
-            constraints.minimum.height
-        } else {
-            INTRINSIC_HEIGHT
-        };
-
-        constraints.constrain(Size::new(width, height))
     }
 }

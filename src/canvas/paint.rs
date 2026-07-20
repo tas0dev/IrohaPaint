@@ -297,7 +297,7 @@ fn paint_draft(
             );
         }
         Interaction::PlacingPathNode {
-            path_id: None,
+            path_id: _None,
             position,
             handle_out,
             ..

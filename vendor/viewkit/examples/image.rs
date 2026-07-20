@@ -120,5 +120,5 @@ impl App for ImageExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<ImageExample>()
+    run::<ImageExample>()
 }

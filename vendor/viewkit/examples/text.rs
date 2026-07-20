@@ -41,5 +41,5 @@ impl App for TextExample {
 }
 
 fn main() -> Result<(), ViewKitError> {
-    viewkit::run::<TextExample>()
+    run::<TextExample>()
 }
