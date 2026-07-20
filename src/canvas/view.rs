@@ -3,13 +3,14 @@ use viewkit::platform::{ButtonState, KeyCode, PointerButton};
 use viewkit::prelude::{CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
-use crate::document::{BezierNode, Document, DocumentPoint, DocumentRect, ObjectKind};
+use crate::document::{BezierNode, Document, DocumentPoint, DocumentRect, ObjectKind, StrokeStyle};
 use crate::editor::EditorTool;
 
 use super::hit_test::{is_first_path_node, object_at, path_node_at, resize_handle_at};
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::paint_editor_canvas;
 use super::state::CanvasController;
+use super::stroke::fit_pencil_stroke;
 
 const HIT_TOLERANCE: f32 = 6.0;
 const MIN_DRAG_SIZE: f32 = 2.0;
@@ -88,7 +89,7 @@ impl EditorCanvas {
 
                 if let Some(id) = selected_id
                     && let Some(object) = current_document.object(id)
-                    && let ObjectKind::Path { path } = object.kind()
+                    && let ObjectKind::Path { path, .. } = object.kind()
                     && let Some(hit) = path_node_at(path, selected_node, document_point, tolerance)
                 {
                     let original = object.kind().clone();
@@ -126,6 +127,12 @@ impl EditorCanvas {
                     current: document_point,
                 };
             }
+            EditorTool::Pencil => {
+                self.controller.get_mut().interaction = Interaction::DrawingPencil {
+                    raw_points: vec![document_point],
+                    preview: None,
+                };
+            }
             EditorTool::Pen => {
                 let active_path = self.controller.get().active_pen_path;
                 let current_document = self.document.get();
@@ -135,7 +142,7 @@ impl EditorCanvas {
                         .map(|object| (id, object.kind().clone()))
                 });
 
-                if let Some((id, ObjectKind::Path { path })) = &active_object
+                if let Some((id, ObjectKind::Path { path, .. })) = &active_object
                     && !path.is_closed()
                     && path.nodes().len() > 1
                     && is_first_path_node(path, document_point, tolerance)
@@ -187,6 +194,21 @@ impl EditorCanvas {
                 *current = document_point;
                 true
             }
+            Interaction::DrawingPencil {
+                raw_points,
+                preview,
+            } => {
+                let should_add = raw_points.last().is_none_or(|last| {
+                    let delta_x = (document_point.x - last.x) * transform.zoom();
+                    let delta_y = (document_point.y - last.y) * transform.zoom();
+                    delta_x * delta_x + delta_y * delta_y >= 0.75 * 0.75
+                });
+                if should_add {
+                    raw_points.push(document_point);
+                    *preview = fit_pencil_stroke(raw_points, 1.25 / transform.zoom());
+                }
+                true
+            }
             Interaction::PlacingPathNode { handle_out, .. } => {
                 *handle_out = document_point;
                 true
@@ -223,6 +245,16 @@ impl EditorCanvas {
                     }
                 });
             }
+            Interaction::DrawingPencil {
+                preview: Some(path),
+                ..
+            } => {
+                self.document
+                    .update(|document| document.add_fitted_path(path, StrokeStyle::default()));
+                let mut state = self.controller.get_mut();
+                state.selected_node = None;
+                state.active_pen_path = None;
+            }
             Interaction::PlacingPathNode {
                 path_id,
                 position,
@@ -250,7 +282,7 @@ impl EditorCanvas {
                     .get()
                     .object(id)
                     .and_then(|object| {
-                        let ObjectKind::Path { path } = object.kind() else {
+                        let ObjectKind::Path { path, .. } = object.kind() else {
                             return None;
                         };
                         path.nodes().len().checked_sub(1)
@@ -444,7 +476,13 @@ impl View for EditorCanvas {
                     EventResult::Consumed
                 }
                 (KeyCode::Space, key_state) => {
-                    self.controller.get_mut().space_pressed = *key_state == ButtonState::Pressed;
+                    let mut state = self.controller.get_mut();
+                    state.space_pressed = *key_state == ButtonState::Pressed;
+                    if *key_state == ButtonState::Pressed
+                        && matches!(state.interaction, Interaction::DrawingPencil { .. })
+                    {
+                        state.interaction = Interaction::Idle;
+                    }
                     EventResult::Consumed
                 }
                 (KeyCode::Z, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {

@@ -1,6 +1,6 @@
 mod app;
 mod canvas;
-mod document;
+pub mod document;
 mod editor;
 mod icons;
 mod views;

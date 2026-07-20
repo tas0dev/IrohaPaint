@@ -4,7 +4,10 @@ use viewkit::draw_command::{DrawCommand, SvgCommand};
 use viewkit::prelude::{Point, Rect, SvgData};
 use viewkit::view::PaintContext;
 
-use crate::document::{BezierNode, BezierPath, Document, DocumentPoint, DocumentRect, ObjectKind};
+use crate::document::{
+    BezierNode, BezierPath, Document, DocumentPoint, DocumentRect, ObjectKind, StrokeCap,
+    StrokeJoin, StrokeStyle,
+};
 use crate::editor::EditorTool;
 
 use super::coordinates::CanvasTransform;
@@ -49,13 +52,13 @@ pub fn paint_editor_canvas(
             .preview_kind(selected_id)
             .unwrap_or_else(|| object.kind().clone());
         if matches!(active_tool, EditorTool::NodeEdit | EditorTool::Pen)
-            && let ObjectKind::Path { path } = &selection_kind
+            && let ObjectKind::Path { path, .. } = &selection_kind
         {
             let selected_index = selected_node
                 .filter(|(object_id, _)| *object_id == selected_id)
                 .map(|(_, index)| index);
             paint_path_nodes(path, selected_index, transform, bounds, context);
-        } else {
+        } else if active_tool != EditorTool::Pencil {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
     }
@@ -94,14 +97,15 @@ fn paint_kind(
                 width: 1.0,
             });
         }
-        ObjectKind::Path { path } => {
-            paint_svg_path(path, transform, canvas_bounds, context);
+        ObjectKind::Path { path, stroke } => {
+            paint_svg_path(path, *stroke, transform, canvas_bounds, context);
         }
     }
 }
 
 fn paint_svg_path(
     path: &BezierPath,
+    stroke: StrokeStyle,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -111,8 +115,20 @@ fn paint_svg_path(
     }
 
     let nodes = path.nodes();
+    let svg_bounds = path_canvas_bounds(
+        path,
+        transform,
+        canvas_bounds,
+        stroke.width * transform.zoom() / 2.0 + 2.0,
+    );
     let mut commands = String::new();
-    write_move(&mut commands, nodes[0].position, transform, canvas_bounds);
+    write_move(
+        &mut commands,
+        nodes[0].position,
+        transform,
+        canvas_bounds,
+        svg_bounds,
+    );
     for segment in nodes.windows(2) {
         write_curve(
             &mut commands,
@@ -121,6 +137,7 @@ fn paint_svg_path(
             segment[1].position,
             transform,
             canvas_bounds,
+            svg_bounds,
         );
     }
     if path.is_closed() {
@@ -133,30 +150,37 @@ fn paint_svg_path(
             first.position,
             transform,
             canvas_bounds,
+            svg_bounds,
         );
         commands.push('Z');
     }
 
     paint_svg_commands(
         &commands,
-        2.0,
+        StrokeStyle {
+            width: stroke.width * transform.zoom(),
+            ..stroke
+        },
         context.theme.colors.text_primary,
-        canvas_bounds,
+        svg_bounds,
         context,
     );
 }
 
 fn paint_svg_commands(
     commands: &str,
-    stroke_width: f32,
+    stroke: StrokeStyle,
     tint: viewkit::prelude::Color,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
 ) {
     let svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="none" stroke="#000" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="none" stroke="#000" stroke-width="{stroke_width}" stroke-linecap="{stroke_cap}" stroke-linejoin="{stroke_join}"/></svg>"##,
         width = canvas_bounds.size.width.max(1.0),
         height = canvas_bounds.size.height.max(1.0),
+        stroke_width = stroke.width.max(0.1),
+        stroke_cap = stroke_cap_name(stroke.cap),
+        stroke_join = stroke_join_name(stroke.join),
     );
     let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
         return;
@@ -191,6 +215,18 @@ fn paint_draft(
             };
             paint_kind(&kind, transform, canvas_bounds, context);
             paint_selection(bounds, transform, canvas_bounds, context);
+        }
+        Interaction::DrawingPencil {
+            preview: Some(path),
+            ..
+        } => {
+            paint_svg_path(
+                path,
+                StrokeStyle::default(),
+                transform,
+                canvas_bounds,
+                context,
+            );
         }
         Interaction::PlacingPathNode {
             path_id: None,
@@ -254,15 +290,36 @@ fn paint_node_controls(
     }
 
     let mut commands = String::new();
+    let control_bounds = points_canvas_bounds(
+        &[node.position, node.handle_in, node.handle_out],
+        transform,
+        canvas_bounds,
+        2.0,
+    );
     for handle in &visible_handles {
-        write_move(&mut commands, node.position, transform, canvas_bounds);
-        write_line(&mut commands, *handle, transform, canvas_bounds);
+        write_move(
+            &mut commands,
+            node.position,
+            transform,
+            canvas_bounds,
+            control_bounds,
+        );
+        write_line(
+            &mut commands,
+            *handle,
+            transform,
+            canvas_bounds,
+            control_bounds,
+        );
     }
     paint_svg_commands(
         &commands,
-        1.0,
+        StrokeStyle {
+            width: 1.0,
+            ..StrokeStyle::default()
+        },
         context.theme.colors.accent,
-        canvas_bounds,
+        control_bounds,
         context,
     );
 
@@ -290,6 +347,22 @@ fn paint_node_controls(
     }
 }
 
+fn stroke_cap_name(cap: StrokeCap) -> &'static str {
+    match cap {
+        StrokeCap::Butt => "butt",
+        StrokeCap::Round => "round",
+        StrokeCap::Square => "square",
+    }
+}
+
+fn stroke_join_name(join: StrokeJoin) -> &'static str {
+    match join {
+        StrokeJoin::Miter => "miter",
+        StrokeJoin::Round => "round",
+        StrokeJoin::Bevel => "bevel",
+    }
+}
+
 fn point_distance(first: DocumentPoint, second: DocumentPoint) -> f32 {
     ((first.x - second.x).powi(2) + (first.y - second.y).powi(2)).sqrt()
 }
@@ -299,8 +372,9 @@ fn write_move(
     point: DocumentPoint,
     transform: CanvasTransform,
     canvas_bounds: Rect,
+    drawing_bounds: Rect,
 ) {
-    let point = local_canvas_point(point, transform, canvas_bounds);
+    let point = local_canvas_point(point, transform, canvas_bounds, drawing_bounds);
     let _ = write!(commands, "M{:.3},{:.3} ", point.x, point.y);
 }
 
@@ -309,8 +383,9 @@ fn write_line(
     point: DocumentPoint,
     transform: CanvasTransform,
     canvas_bounds: Rect,
+    drawing_bounds: Rect,
 ) {
-    let point = local_canvas_point(point, transform, canvas_bounds);
+    let point = local_canvas_point(point, transform, canvas_bounds, drawing_bounds);
     let _ = write!(commands, "L{:.3},{:.3} ", point.x, point.y);
 }
 
@@ -321,10 +396,11 @@ fn write_curve(
     end: DocumentPoint,
     transform: CanvasTransform,
     canvas_bounds: Rect,
+    drawing_bounds: Rect,
 ) {
-    let control_1 = local_canvas_point(control_1, transform, canvas_bounds);
-    let control_2 = local_canvas_point(control_2, transform, canvas_bounds);
-    let end = local_canvas_point(end, transform, canvas_bounds);
+    let control_1 = local_canvas_point(control_1, transform, canvas_bounds, drawing_bounds);
+    let control_2 = local_canvas_point(control_2, transform, canvas_bounds, drawing_bounds);
+    let end = local_canvas_point(end, transform, canvas_bounds, drawing_bounds);
     let _ = write!(
         commands,
         "C{:.3},{:.3} {:.3},{:.3} {:.3},{:.3} ",
@@ -336,11 +412,59 @@ fn local_canvas_point(
     point: DocumentPoint,
     transform: CanvasTransform,
     canvas_bounds: Rect,
+    drawing_bounds: Rect,
 ) -> Point {
     let point = transform.document_to_canvas(point, canvas_bounds);
     Point::new(
-        point.x - canvas_bounds.origin.x,
-        point.y - canvas_bounds.origin.y,
+        point.x - drawing_bounds.origin.x,
+        point.y - drawing_bounds.origin.y,
+    )
+}
+
+fn path_canvas_bounds(
+    path: &BezierPath,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    padding: f32,
+) -> Rect {
+    let points = path
+        .nodes()
+        .iter()
+        .flat_map(|node| [node.position, node.handle_in, node.handle_out]);
+    document_points_canvas_bounds(points, transform, canvas_bounds, padding)
+}
+
+fn points_canvas_bounds(
+    points: &[DocumentPoint],
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    padding: f32,
+) -> Rect {
+    document_points_canvas_bounds(points.iter().copied(), transform, canvas_bounds, padding)
+}
+
+fn document_points_canvas_bounds(
+    points: impl IntoIterator<Item = DocumentPoint>,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    padding: f32,
+) -> Rect {
+    let mut points = points.into_iter();
+    let first = transform.document_to_canvas(points.next().unwrap_or_default(), canvas_bounds);
+    let (mut min_x, mut max_x) = (first.x, first.x);
+    let (mut min_y, mut max_y) = (first.y, first.y);
+    for point in points {
+        let point = transform.document_to_canvas(point, canvas_bounds);
+        min_x = min_x.min(point.x);
+        max_x = max_x.max(point.x);
+        min_y = min_y.min(point.y);
+        max_y = max_y.max(point.y);
+    }
+    Rect::new(
+        min_x - padding,
+        min_y - padding,
+        (max_x - min_x + padding * 2.0).max(1.0),
+        (max_y - min_y + padding * 2.0).max(1.0),
     )
 }
 

@@ -94,6 +94,16 @@ impl BezierPath {
         self.closed
     }
 
+    pub(crate) fn from_nodes(nodes: Vec<BezierNode>) -> Option<Self> {
+        if nodes.len() < 2 {
+            return None;
+        }
+        Some(Self {
+            nodes,
+            closed: false,
+        })
+    }
+
     pub(crate) fn push_node(&mut self, node: BezierNode) {
         self.nodes.push(node);
     }
@@ -140,11 +150,51 @@ pub enum NodeComponent {
     HandleOut,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StrokeCap {
+    Butt,
+    #[default]
+    Round,
+    Square,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StrokeJoin {
+    Miter,
+    #[default]
+    Round,
+    Bevel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrokeStyle {
+    pub width: f32,
+    pub cap: StrokeCap,
+    pub join: StrokeJoin,
+}
+
+impl Default for StrokeStyle {
+    fn default() -> Self {
+        Self {
+            width: 2.0,
+            cap: StrokeCap::Round,
+            join: StrokeJoin::Round,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjectKind {
-    Rectangle { bounds: DocumentRect },
-    Ellipse { bounds: DocumentRect },
-    Path { path: BezierPath },
+    Rectangle {
+        bounds: DocumentRect,
+    },
+    Ellipse {
+        bounds: DocumentRect,
+    },
+    Path {
+        path: BezierPath,
+        stroke: StrokeStyle,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,7 +215,7 @@ impl DocumentObject {
     pub fn bounds(&self) -> DocumentRect {
         match &self.kind {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => *bounds,
-            ObjectKind::Path { path } => path_bounds(path),
+            ObjectKind::Path { path, .. } => path_bounds(path),
         }
     }
 
@@ -174,7 +224,7 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
                 *bounds = new_bounds;
             }
-            ObjectKind::Path { path } => {
+            ObjectKind::Path { path, .. } => {
                 let old_bounds = path_bounds(path);
                 for node in &mut path.nodes {
                     scale_point(&mut node.position, old_bounds, new_bounds);
@@ -190,7 +240,7 @@ impl DocumentObject {
             ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
                 *bounds = bounds.translated(delta);
             }
-            ObjectKind::Path { path } => {
+            ObjectKind::Path { path, .. } => {
                 for node in &mut path.nodes {
                     translate_point(&mut node.position, delta);
                     translate_point(&mut node.handle_in, delta);
@@ -295,12 +345,17 @@ impl Document {
     pub fn add_path(&mut self, first_node: BezierNode) -> ObjectId {
         self.add_object(ObjectKind::Path {
             path: BezierPath::new(first_node),
+            stroke: StrokeStyle::default(),
         })
+    }
+
+    pub fn add_fitted_path(&mut self, path: BezierPath, stroke: StrokeStyle) -> ObjectId {
+        self.add_object(ObjectKind::Path { path, stroke })
     }
 
     pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {
         self.edit_object(id, |object| {
-            if let ObjectKind::Path { path } = &mut object.kind
+            if let ObjectKind::Path { path, .. } = &mut object.kind
                 && !path.closed
             {
                 path.nodes.push(node);
@@ -310,7 +365,7 @@ impl Document {
 
     pub fn close_path(&mut self, id: ObjectId) {
         self.edit_object(id, |object| {
-            if let ObjectKind::Path { path } = &mut object.kind
+            if let ObjectKind::Path { path, .. } = &mut object.kind
                 && path.nodes.len() > 1
             {
                 path.closed = true;
@@ -326,7 +381,7 @@ impl Document {
         point: DocumentPoint,
     ) {
         self.edit_object(id, |object| {
-            let ObjectKind::Path { path } = &mut object.kind else {
+            let ObjectKind::Path { path, .. } = &mut object.kind else {
                 return;
             };
             path.edit_node(node_index, component, point);
@@ -337,7 +392,8 @@ impl Document {
         let Some((layer_index, object_index)) = self.find_object_index(id) else {
             return;
         };
-        let ObjectKind::Path { path } = &self.layers[layer_index].objects[object_index].kind else {
+        let ObjectKind::Path { path, .. } = &self.layers[layer_index].objects[object_index].kind
+        else {
             return;
         };
         if node_index >= path.nodes.len() {
@@ -345,7 +401,8 @@ impl Document {
         }
 
         self.record_change();
-        let ObjectKind::Path { path } = &mut self.layers[layer_index].objects[object_index].kind
+        let ObjectKind::Path { path, .. } =
+            &mut self.layers[layer_index].objects[object_index].kind
         else {
             unreachable!();
         };

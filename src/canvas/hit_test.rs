@@ -73,7 +73,9 @@ fn kind_contains(kind: &ObjectKind, point: DocumentPoint, tolerance: f32) -> boo
     match kind {
         ObjectKind::Rectangle { bounds } => expanded(*bounds, tolerance).contains(point),
         ObjectKind::Ellipse { bounds } => ellipse_contains(*bounds, point, tolerance),
-        ObjectKind::Path { path } => bezier_path_contains(path, point, tolerance),
+        ObjectKind::Path { path, stroke } => {
+            bezier_path_contains(path, point, tolerance + stroke.width / 2.0)
+        }
     }
 }
 

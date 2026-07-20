@@ -56,6 +56,10 @@ pub enum Interaction {
         start: DocumentPoint,
         current: DocumentPoint,
     },
+    DrawingPencil {
+        raw_points: Vec<DocumentPoint>,
+        preview: Option<BezierPath>,
+    },
     PlacingPathNode {
         path_id: Option<ObjectId>,
         original: Option<ObjectKind>,
@@ -141,12 +145,15 @@ fn appended_path_kind(
     position: DocumentPoint,
     handle_out: DocumentPoint,
 ) -> ObjectKind {
-    let ObjectKind::Path { path } = original else {
+    let ObjectKind::Path { path, stroke } = original else {
         return original.clone();
     };
     let mut path = path.clone();
     path.push_node(BezierNode::smooth(position, handle_out));
-    ObjectKind::Path { path }
+    ObjectKind::Path {
+        path,
+        stroke: *stroke,
+    }
 }
 
 fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
@@ -157,10 +164,11 @@ fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
         ObjectKind::Ellipse { bounds } => ObjectKind::Ellipse {
             bounds: bounds.translated(delta),
         },
-        ObjectKind::Path { path } => ObjectKind::Path {
+        ObjectKind::Path { path, stroke } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(point.x + delta.x, point.y + delta.y)
             }),
+            stroke: *stroke,
         },
     }
 }
@@ -170,7 +178,7 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
     match kind {
         ObjectKind::Rectangle { .. } => ObjectKind::Rectangle { bounds: new_bounds },
         ObjectKind::Ellipse { .. } => ObjectKind::Ellipse { bounds: new_bounds },
-        ObjectKind::Path { path } => ObjectKind::Path {
+        ObjectKind::Path { path, stroke } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(
                     scale_axis(
@@ -189,6 +197,7 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
                     ),
                 )
             }),
+            stroke: *stroke,
         },
     }
 }
@@ -196,7 +205,7 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
 pub fn kind_bounds(kind: &ObjectKind) -> DocumentRect {
     match kind {
         ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => *bounds,
-        ObjectKind::Path { path } => {
+        ObjectKind::Path { path, .. } => {
             let Some(first) = path.nodes().first() else {
                 return DocumentRect::default();
             };
@@ -252,12 +261,15 @@ fn edited_path_kind(
     component: NodeComponent,
     point: DocumentPoint,
 ) -> ObjectKind {
-    let ObjectKind::Path { path } = original else {
+    let ObjectKind::Path { path, stroke } = original else {
         return original.clone();
     };
     let mut path = path.clone();
     path.edit_node(node_index, component, point);
-    ObjectKind::Path { path }
+    ObjectKind::Path {
+        path,
+        stroke: *stroke,
+    }
 }
 
 fn scale_axis(value: f32, old_start: f32, old_size: f32, new_start: f32, new_size: f32) -> f32 {
