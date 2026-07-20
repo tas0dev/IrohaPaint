@@ -6,6 +6,7 @@ use super::hit_test::SegmentHit;
 use super::interaction::Interaction;
 use crate::document::{DocumentRect, NodeComponent, ObjectId};
 use viewkit::platform::KeyModifiers;
+use viewkit::prelude::Point;
 
 #[derive(Clone, Default)]
 pub struct CanvasController {
@@ -24,6 +25,7 @@ pub(crate) struct CanvasState {
     pub modifiers: KeyModifiers,
     pub space_pressed: bool,
     pub paint_dirty: Option<DocumentRect>,
+    pub pointer_canvas: Option<Point>,
 }
 
 impl CanvasController {

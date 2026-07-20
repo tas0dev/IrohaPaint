@@ -22,6 +22,7 @@ pub(crate) struct NodePresentation<'a> {
     pub selected: &'a [(ObjectId, usize)],
     pub hovered: Option<(ObjectId, usize, NodeComponent)>,
     pub segment: Option<(ObjectId, SegmentHit)>,
+    pub brush_cursor: Option<(Point, f32)>,
 }
 
 pub fn paint_editor_canvas(
@@ -86,6 +87,26 @@ pub fn paint_editor_canvas(
     }
 
     paint_draft(interaction, transform, bounds, context);
+
+    if let Some((position, width)) = nodes.brush_cursor {
+        let radius = (width * transform.zoom() * 0.5).max(1.0);
+        let cursor_bounds = Rect::new(
+            position.x - radius,
+            position.y - radius,
+            radius * 2.0,
+            radius * 2.0,
+        );
+        context.display_list.push(DrawCommand::StrokeEllipse {
+            rect: cursor_bounds,
+            color: context.theme.colors.elevated_surface,
+            width: 3.0,
+        });
+        context.display_list.push(DrawCommand::StrokeEllipse {
+            rect: cursor_bounds,
+            color: context.theme.colors.border_strong,
+            width: 1.0,
+        });
+    }
 
     if artboard.is_some() {
         context.display_list.push(DrawCommand::PopClip);

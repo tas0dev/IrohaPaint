@@ -83,8 +83,8 @@ pub enum Interaction {
         raw_points: Vec<DocumentPoint>,
         preview: Option<BezierPath>,
         style: ObjectStyle,
-        width: f32,
         smoothing: f32,
+        streamline: f32,
     },
     PlacingPathNode {
         path_id: Option<ObjectId>,

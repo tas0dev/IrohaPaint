@@ -80,7 +80,8 @@ impl BrushDefinition {
 
     pub fn fitting_tolerance(&self, zoom: f32) -> f32 {
         let smoothing = self.smoothing.clamp(0.0, 1.0);
-        (0.55 + smoothing * 1.75) / zoom.max(0.01)
+        let streamline = self.streamline.clamp(0.0, 1.0);
+        (0.45 + smoothing * 1.35 + streamline * 0.9) / zoom.max(0.01)
     }
 }
 

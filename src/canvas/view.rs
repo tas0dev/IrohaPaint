@@ -18,7 +18,7 @@ use super::paint::{NodePresentation, paint_editor_canvas};
 use super::raster_stroke::interpolate_dabs;
 use super::region_fill;
 use super::state::CanvasController;
-use super::stroke::{fit_blob_stroke, fit_pencil_stroke};
+use super::stroke::{fit_paint_stroke, fit_pencil_stroke};
 
 const HIT_TOLERANCE: f32 = 6.0;
 const MIN_DRAG_SIZE: f32 = 2.0;
@@ -339,17 +339,16 @@ impl EditorCanvas {
                 }
                 let brush = self.brushes.get().active().clone();
                 let width = self.bindings.blob_width.get();
-                let style = blob_style(brush.color);
+                let style = paint_brush_style(brush.color, width);
                 self.controller.get_mut().interaction = Interaction::DrawingBlob {
                     raw_points: vec![document_point],
-                    preview: fit_blob_stroke(
+                    preview: fit_paint_stroke(
                         &[document_point],
-                        width,
                         brush.fitting_tolerance(transform.zoom()),
                     ),
                     style,
-                    width,
                     smoothing: brush.smoothing,
+                    streamline: brush.streamline,
                 };
             }
             EditorTool::Pen => {
@@ -394,6 +393,9 @@ impl EditorCanvas {
     fn handle_pointer_move(&self, position: Point, bounds: Rect) -> bool {
         let drawing_bounds = self.drawing_bounds();
         let mut state = self.controller.get_mut();
+        let pointer_canvas = bounds.contains(position).then_some(position);
+        let cursor_changed = state.pointer_canvas != pointer_canvas;
+        state.pointer_canvas = pointer_canvas;
         let transform = state.transform;
         let document_point = transform.canvas_to_document(position, bounds);
         let constrained_point = drawing_bounds
@@ -565,8 +567,8 @@ impl EditorCanvas {
             Interaction::DrawingBlob {
                 raw_points,
                 preview,
-                width,
                 smoothing,
+                streamline,
                 ..
             } => {
                 if !inside_drawing_bounds {
@@ -579,9 +581,11 @@ impl EditorCanvas {
                 });
                 if should_add {
                     raw_points.push(document_point);
-                    let tolerance =
-                        (0.55 + smoothing.clamp(0.0, 1.0) * 1.75) / transform.zoom().max(0.01);
-                    *preview = fit_blob_stroke(raw_points, *width, tolerance);
+                    let tolerance = (0.45
+                        + smoothing.clamp(0.0, 1.0) * 1.35
+                        + streamline.clamp(0.0, 1.0) * 0.9)
+                        / transform.zoom().max(0.01);
+                    *preview = fit_paint_stroke(raw_points, tolerance);
                 }
                 true
             }
@@ -594,6 +598,7 @@ impl EditorCanvas {
             Interaction::Idle => {
                 drop(state);
                 self.update_node_hover(document_point, transform.zoom())
+                    || (self.active_tool.get() == EditorTool::BlobBrush && cursor_changed)
             }
         }
     }
@@ -915,6 +920,10 @@ impl View for EditorCanvas {
                 selected: &state.selected_nodes,
                 hovered: state.hovered_node,
                 segment: state.hovered_segment,
+                brush_cursor: (self.active_tool.get() == EditorTool::BlobBrush)
+                    .then_some(state.pointer_canvas)
+                    .flatten()
+                    .map(|position| (position, self.bindings.blob_width.get())),
             },
             bounds,
             context,
@@ -969,6 +978,11 @@ impl View for EditorCanvas {
                 context.request_redraw_in(self.take_redraw_bounds(bounds));
                 self.update_cursor(context);
                 EventResult::Consumed
+            }
+            ViewEvent::PointerLeft => {
+                self.controller.get_mut().pointer_canvas = None;
+                context.request_redraw_in(bounds);
+                EventResult::Ignored
             }
             ViewEvent::PointerReleased { button, .. }
                 if matches!(
@@ -1208,14 +1222,14 @@ fn eraser_points(from: DocumentPoint, to: DocumentPoint, spacing: f32) -> Vec<Do
         .collect()
 }
 
-fn blob_style(color: DocumentColor) -> ObjectStyle {
+fn paint_brush_style(color: DocumentColor, width: f32) -> ObjectStyle {
     ObjectStyle {
         stroke: crate::document::StrokeStyle {
-            width: 0.1,
-            color: DocumentColor::TRANSPARENT,
+            width: width.max(1.0),
+            color,
             ..crate::document::StrokeStyle::default()
         },
-        fill: color,
+        fill: DocumentColor::TRANSPARENT,
     }
 }
 
