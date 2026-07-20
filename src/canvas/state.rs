@@ -2,6 +2,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use super::coordinates::CanvasTransform;
+use super::hit_test::SegmentHit;
 use super::interaction::Interaction;
 use crate::document::NodeComponent;
 use crate::document::ObjectId;
@@ -19,6 +20,7 @@ pub(crate) struct CanvasState {
     pub active_pen_path: Option<ObjectId>,
     pub selected_nodes: Vec<(ObjectId, usize)>,
     pub hovered_node: Option<(ObjectId, usize, NodeComponent)>,
+    pub hovered_segment: Option<(ObjectId, SegmentHit)>,
     pub modifiers: KeyModifiers,
     pub space_pressed: bool,
 }

@@ -1,3 +1,7 @@
+mod path_edit;
+
+use path_edit::simplification_candidates;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DocumentPoint {
     pub x: f32,
@@ -385,6 +389,63 @@ impl Document {
         });
     }
 
+    pub fn insert_path_node(&mut self, id: ObjectId, start_index: usize, t: f32) -> Option<usize> {
+        let (layer_index, object_index) = self.find_object_index(id)?;
+        let ObjectKind::Path { path, .. } = &self.layers[layer_index].objects[object_index].kind
+        else {
+            return None;
+        };
+        if path.nodes.len() < 2 {
+            return None;
+        }
+        self.record_change();
+        let ObjectKind::Path { path, .. } =
+            &mut self.layers[layer_index].objects[object_index].kind
+        else {
+            unreachable!();
+        };
+        let inserted = path.insert_node_on_segment(start_index, t);
+        if inserted.is_some() {
+            self.selected_object = Some(id);
+        }
+        inserted
+    }
+
+    pub fn set_path_node_kinds(&mut self, id: ObjectId, indices: &[usize], kind: NodeKind) {
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { path, .. } = &mut object.kind {
+                path.set_node_kinds(indices, kind);
+            }
+        });
+    }
+
+    pub fn smooth_path_nodes(&mut self, id: ObjectId, indices: &[usize]) {
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { path, .. } = &mut object.kind {
+                path.smooth_nodes(indices);
+            }
+        });
+    }
+
+    pub fn simplify_path_nodes(&mut self, id: ObjectId, indices: &[usize], tolerance: f32) -> bool {
+        let Some(object) = self.object(id) else {
+            return false;
+        };
+        let ObjectKind::Path { path, .. } = object.kind() else {
+            return false;
+        };
+        let removable = simplification_candidates(path, indices, tolerance);
+        if removable.is_empty() {
+            return false;
+        }
+        self.edit_object(id, |object| {
+            if let ObjectKind::Path { path, .. } = &mut object.kind {
+                path.remove_nodes_preserving_shape(&removable);
+            }
+        });
+        true
+    }
+
     pub fn close_path(&mut self, id: ObjectId) {
         self.edit_object(id, |object| {
             if let ObjectKind::Path { path, .. } = &mut object.kind
@@ -447,14 +508,7 @@ impl Document {
         else {
             unreachable!();
         };
-        let mut indices = node_indices.to_vec();
-        indices.sort_unstable();
-        indices.dedup();
-        for index in indices.into_iter().rev() {
-            if index < path.nodes.len() {
-                path.nodes.remove(index);
-            }
-        }
+        path.remove_nodes_preserving_shape(node_indices);
         if path.nodes.is_empty() {
             self.layers[layer_index].objects.remove(object_index);
             self.selected_object = None;

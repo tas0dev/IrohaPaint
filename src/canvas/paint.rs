@@ -11,6 +11,7 @@ use crate::document::{
 use crate::editor::EditorTool;
 
 use super::coordinates::CanvasTransform;
+use super::hit_test::SegmentHit;
 use super::interaction::{Interaction, ResizeHandle, ShapeDraftKind, kind_bounds};
 
 const HANDLE_SIZE: f32 = 8.0;
@@ -19,6 +20,7 @@ const CONTROL_HANDLE_SIZE: f32 = 6.0;
 pub(crate) struct NodePresentation<'a> {
     pub selected: &'a [(ObjectId, usize)],
     pub hovered: Option<(ObjectId, usize, NodeComponent)>,
+    pub segment: Option<(ObjectId, SegmentHit)>,
 }
 
 pub fn paint_editor_canvas(
@@ -64,10 +66,19 @@ pub fn paint_editor_canvas(
                 .iter()
                 .filter_map(|(object_id, index)| (*object_id == selected_id).then_some(*index))
                 .collect::<Vec<_>>();
-            let hovered = nodes.hovered.and_then(|(object_id, index, component)| {
-                (object_id == selected_id).then_some((index, component))
-            });
+            let hovered = (active_tool == EditorTool::NodeEdit)
+                .then_some(nodes.hovered)
+                .flatten()
+                .and_then(|(object_id, index, component)| {
+                    (object_id == selected_id).then_some((index, component))
+                });
             paint_path_nodes(path, &selected_indices, hovered, transform, bounds, context);
+            if active_tool == EditorTool::NodeEdit
+                && let Some((object_id, hit)) = nodes.segment
+                && object_id == selected_id
+            {
+                paint_segment_insertion(hit.point, transform, bounds, context);
+            }
         } else if active_tool != EditorTool::Pencil {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
@@ -537,6 +548,30 @@ fn paint_handle(center: Point, context: &mut PaintContext<'_>) {
     context.display_list.push(DrawCommand::StrokeRect {
         rect,
         color: context.theme.colors.accent,
+        width: 1.0,
+    });
+}
+
+fn paint_segment_insertion(
+    point: DocumentPoint,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    context: &mut PaintContext<'_>,
+) {
+    let center = transform.document_to_canvas(point, canvas_bounds);
+    let rect = Rect::new(
+        center.x - CONTROL_HANDLE_SIZE / 2.0,
+        center.y - CONTROL_HANDLE_SIZE / 2.0,
+        CONTROL_HANDLE_SIZE,
+        CONTROL_HANDLE_SIZE,
+    );
+    context.display_list.push(DrawCommand::FillEllipse {
+        rect,
+        color: context.theme.colors.elevated_surface,
+    });
+    context.display_list.push(DrawCommand::StrokeEllipse {
+        rect,
+        color: context.theme.colors.accent_hovered,
         width: 1.0,
     });
 }

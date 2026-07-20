@@ -32,6 +32,13 @@ pub struct NodeHit {
     pub component: NodeComponent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SegmentHit {
+    pub start_index: usize,
+    pub t: f32,
+    pub point: DocumentPoint,
+}
+
 pub fn path_node_at(
     path: &BezierPath,
     selected_nodes: &[usize],
@@ -62,6 +69,97 @@ pub fn path_node_at(
             index,
             component: NodeComponent::Anchor,
         })
+}
+
+pub fn path_segment_at(
+    path: &BezierPath,
+    point: DocumentPoint,
+    tolerance: f32,
+) -> Option<SegmentHit> {
+    let nodes = path.nodes();
+    if nodes.len() < 2 {
+        return None;
+    }
+    let segment_count = if path.is_closed() {
+        nodes.len()
+    } else {
+        nodes.len() - 1
+    };
+    let mut closest = None;
+    let mut closest_distance = tolerance;
+    for start_index in 0..segment_count {
+        let end_index = (start_index + 1) % nodes.len();
+        let start = nodes[start_index];
+        let end = nodes[end_index];
+        const STEPS: usize = 32;
+        let mut best_t = 0.0;
+        let mut best_distance = f32::MAX;
+        for step in 0..=STEPS {
+            let t = step as f32 / STEPS as f32;
+            let curve_point = cubic_point(
+                start.position,
+                start.handle_out,
+                end.handle_in,
+                end.position,
+                t,
+            );
+            let distance = point_distance(point, curve_point);
+            if distance < best_distance {
+                best_distance = distance;
+                best_t = t;
+            }
+        }
+        let radius = 1.0 / STEPS as f32;
+        let mut low = (best_t - radius).max(0.0);
+        let mut high = (best_t + radius).min(1.0);
+        for _ in 0..8 {
+            let left = low + (high - low) / 3.0;
+            let right = high - (high - low) / 3.0;
+            let left_distance = point_distance(
+                point,
+                cubic_point(
+                    start.position,
+                    start.handle_out,
+                    end.handle_in,
+                    end.position,
+                    left,
+                ),
+            );
+            let right_distance = point_distance(
+                point,
+                cubic_point(
+                    start.position,
+                    start.handle_out,
+                    end.handle_in,
+                    end.position,
+                    right,
+                ),
+            );
+            if left_distance <= right_distance {
+                high = right;
+            } else {
+                low = left;
+            }
+        }
+        let t = (low + high) / 2.0;
+        let curve_point = cubic_point(
+            start.position,
+            start.handle_out,
+            end.handle_in,
+            end.position,
+            t,
+        );
+        let distance = point_distance(point, curve_point);
+        if distance <= closest_distance {
+            closest_distance = distance;
+            closest = Some(SegmentHit {
+                start_index,
+                t,
+                point: curve_point,
+            });
+        }
+    }
+    closest
 }
 
 pub fn is_first_path_node(path: &BezierPath, point: DocumentPoint, tolerance: f32) -> bool {

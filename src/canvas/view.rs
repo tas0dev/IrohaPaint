@@ -8,7 +8,9 @@ use crate::document::{
 };
 use crate::editor::EditorTool;
 
-use super::hit_test::{is_first_path_node, object_at, path_node_at, resize_handle_at};
+use super::hit_test::{
+    is_first_path_node, object_at, path_node_at, path_segment_at, resize_handle_at,
+};
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::{NodePresentation, paint_editor_canvas};
 use super::state::CanvasController;
@@ -136,6 +138,28 @@ impl EditorCanvas {
                 }
 
                 if let Some(id) = selected_id
+                    && let Some(object) = current_document.object(id)
+                    && let ObjectKind::Path { path, .. } = object.kind()
+                    && let Some(hit) = path_segment_at(path, document_point, tolerance)
+                {
+                    if modifiers.shift {
+                        return;
+                    }
+                    drop(current_document);
+                    if let Some(index) = self
+                        .document
+                        .update(|document| document.insert_path_node(id, hit.start_index, hit.t))
+                    {
+                        let mut state = self.controller.get_mut();
+                        state.selected_nodes.clear();
+                        state.selected_nodes.push((id, index));
+                        state.hovered_segment = None;
+                        state.interaction = Interaction::Idle;
+                    }
+                    return;
+                }
+
+                if let Some(id) = selected_id
                     && current_document
                         .object(id)
                         .is_some_and(|object| matches!(object.kind(), ObjectKind::Path { .. }))
@@ -160,6 +184,7 @@ impl EditorCanvas {
                 self.document.update(|document| document.select_object(hit));
                 let mut state = self.controller.get_mut();
                 state.selected_nodes.clear();
+                state.hovered_segment = None;
                 state.interaction = Interaction::Idle;
             }
             EditorTool::Rectangle => {
@@ -459,19 +484,26 @@ impl EditorCanvas {
 
     fn update_node_hover(&self, point: DocumentPoint, zoom: f32) -> bool {
         let previous = self.controller.get().hovered_node;
+        let previous_segment = self.controller.get().hovered_segment;
         if self.active_tool.get() != EditorTool::NodeEdit {
-            self.controller.get_mut().hovered_node = None;
-            return previous.is_some();
+            let mut state = self.controller.get_mut();
+            state.hovered_node = None;
+            state.hovered_segment = None;
+            return previous.is_some() || previous_segment.is_some();
         }
         let document = self.document.get();
         let Some(id) = document.selected_object() else {
-            self.controller.get_mut().hovered_node = None;
-            return previous.is_some();
+            let mut state = self.controller.get_mut();
+            state.hovered_node = None;
+            state.hovered_segment = None;
+            return previous.is_some() || previous_segment.is_some();
         };
         let Some(ObjectKind::Path { path, .. }) = document.object(id).map(|object| object.kind())
         else {
-            self.controller.get_mut().hovered_node = None;
-            return previous.is_some();
+            let mut state = self.controller.get_mut();
+            state.hovered_node = None;
+            state.hovered_segment = None;
+            return previous.is_some() || previous_segment.is_some();
         };
         let selected = self
             .controller
@@ -482,12 +514,20 @@ impl EditorCanvas {
             .collect::<Vec<_>>();
         let hit = path_node_at(path, &selected, point, HIT_TOLERANCE / zoom);
         let hovered = hit.map(|hit| (id, hit.index, hit.component));
-        self.controller.get_mut().hovered_node = hovered;
-        previous != hovered
+        let allow_segment = hovered.is_none() && !self.controller.get().modifiers.shift;
+        let hovered_segment = allow_segment
+            .then(|| path_segment_at(path, point, HIT_TOLERANCE / zoom))
+            .flatten()
+            .map(|hit| (id, hit));
+        let mut state = self.controller.get_mut();
+        state.hovered_node = hovered;
+        state.hovered_segment = hovered_segment;
+        previous != hovered || previous_segment != hovered_segment
     }
 
     fn update_cursor(&self, context: &mut EventContext<'_>) {
-        let cursor = match &self.controller.get().interaction {
+        let state = self.controller.get();
+        let cursor = match &state.interaction {
             Interaction::Resizing { handle, .. } => match handle {
                 super::interaction::ResizeHandle::TopLeft
                 | super::interaction::ResizeHandle::BottomRight => CursorIcon::NwseResize,
@@ -495,6 +535,11 @@ impl EditorCanvas {
                 | super::interaction::ResizeHandle::BottomLeft => CursorIcon::NeswResize,
             },
             Interaction::Panning { .. } => CursorIcon::Pointer,
+            Interaction::Idle
+                if state.hovered_node.is_some() || state.hovered_segment.is_some() =>
+            {
+                CursorIcon::Pointer
+            }
             _ => CursorIcon::Default,
         };
         context.set_cursor(cursor);
@@ -517,6 +562,7 @@ impl View for EditorCanvas {
             NodePresentation {
                 selected: &state.selected_nodes,
                 hovered: state.hovered_node,
+                segment: state.hovered_segment,
             },
             bounds,
             context,
@@ -649,6 +695,7 @@ impl View for EditorCanvas {
                     let mut canvas = self.controller.get_mut();
                     canvas.selected_nodes.clear();
                     canvas.hovered_node = None;
+                    canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
@@ -658,6 +705,7 @@ impl View for EditorCanvas {
                     let mut canvas = self.controller.get_mut();
                     canvas.selected_nodes.clear();
                     canvas.hovered_node = None;
+                    canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
@@ -665,7 +713,14 @@ impl View for EditorCanvas {
                 _ => EventResult::Ignored,
             },
             ViewEvent::ModifiersChanged { modifiers } => {
-                self.controller.get_mut().modifiers = *modifiers;
+                let mut state = self.controller.get_mut();
+                state.modifiers = *modifiers;
+                if modifiers.shift {
+                    state.hovered_segment = None;
+                }
+                drop(state);
+                context.request_redraw_in(bounds);
+                self.update_cursor(context);
                 EventResult::Ignored
             }
             ViewEvent::FocusChanged { focused: false } => {

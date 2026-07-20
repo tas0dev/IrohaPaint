@@ -51,7 +51,7 @@ impl App for IrohaPaint {
                             .flex_grow(1.0),
                         )
                         .child(Divider::new())
-                        .child(inspector::view(self.document.clone()))
+                        .child(inspector::view(self.document.clone(), self.canvas.clone()))
                         .layout()
                         .flex_grow(1.0),
                 ),
