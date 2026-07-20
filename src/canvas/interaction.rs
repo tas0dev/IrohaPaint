@@ -3,6 +3,7 @@ use viewkit::prelude::Point;
 use crate::brush::BrushDefinition;
 use crate::document::{
     BezierNode, BezierPath, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind,
+    ObjectStyle,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +57,7 @@ pub enum Interaction {
         kind: ShapeDraftKind,
         start: DocumentPoint,
         current: DocumentPoint,
+        style: ObjectStyle,
     },
     DrawingPencil {
         raw_points: Vec<DocumentPoint>,
@@ -162,30 +164,32 @@ fn appended_path_kind(
     position: DocumentPoint,
     handle_out: DocumentPoint,
 ) -> ObjectKind {
-    let ObjectKind::Path { path, stroke } = original else {
+    let ObjectKind::Path { path, style } = original else {
         return original.clone();
     };
     let mut path = path.clone();
     path.push_node(BezierNode::smooth(position, handle_out));
     ObjectKind::Path {
         path,
-        stroke: *stroke,
+        style: *style,
     }
 }
 
 fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
     match kind {
-        ObjectKind::Rectangle { bounds } => ObjectKind::Rectangle {
+        ObjectKind::Rectangle { bounds, style } => ObjectKind::Rectangle {
             bounds: bounds.translated(delta),
+            style: *style,
         },
-        ObjectKind::Ellipse { bounds } => ObjectKind::Ellipse {
+        ObjectKind::Ellipse { bounds, style } => ObjectKind::Ellipse {
             bounds: bounds.translated(delta),
+            style: *style,
         },
-        ObjectKind::Path { path, stroke } => ObjectKind::Path {
+        ObjectKind::Path { path, style } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(point.x + delta.x, point.y + delta.y)
             }),
-            stroke: *stroke,
+            style: *style,
         },
     }
 }
@@ -193,9 +197,15 @@ fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
 fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
     let old_bounds = kind_bounds(kind);
     match kind {
-        ObjectKind::Rectangle { .. } => ObjectKind::Rectangle { bounds: new_bounds },
-        ObjectKind::Ellipse { .. } => ObjectKind::Ellipse { bounds: new_bounds },
-        ObjectKind::Path { path, stroke } => ObjectKind::Path {
+        ObjectKind::Rectangle { style, .. } => ObjectKind::Rectangle {
+            bounds: new_bounds,
+            style: *style,
+        },
+        ObjectKind::Ellipse { style, .. } => ObjectKind::Ellipse {
+            bounds: new_bounds,
+            style: *style,
+        },
+        ObjectKind::Path { path, style } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(
                     scale_axis(
@@ -214,14 +224,14 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
                     ),
                 )
             }),
-            stroke: *stroke,
+            style: *style,
         },
     }
 }
 
 pub fn kind_bounds(kind: &ObjectKind) -> DocumentRect {
     match kind {
-        ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => *bounds,
+        ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => *bounds,
         ObjectKind::Path { path, .. } => {
             let Some(first) = path.nodes().first() else {
                 return DocumentRect::default();
@@ -283,7 +293,7 @@ fn edited_path_kind(
     point: DocumentPoint,
     independent: bool,
 ) -> ObjectKind {
-    let ObjectKind::Path { path, stroke } = original else {
+    let ObjectKind::Path { path, style } = original else {
         return original.clone();
     };
     let mut path = path.clone();
@@ -297,7 +307,7 @@ fn edited_path_kind(
     }
     ObjectKind::Path {
         path,
-        stroke: *stroke,
+        style: *style,
     }
 }
 

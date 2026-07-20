@@ -288,17 +288,25 @@ impl Default for StrokeStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ObjectStyle {
+    pub stroke: StrokeStyle,
+    pub fill: DocumentColor,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjectKind {
     Rectangle {
         bounds: DocumentRect,
+        style: ObjectStyle,
     },
     Ellipse {
         bounds: DocumentRect,
+        style: ObjectStyle,
     },
     Path {
         path: BezierPath,
-        stroke: StrokeStyle,
+        style: ObjectStyle,
     },
 }
 
@@ -317,16 +325,24 @@ impl DocumentObject {
         &self.kind
     }
 
+    pub fn style(&self) -> ObjectStyle {
+        match self.kind {
+            ObjectKind::Rectangle { style, .. }
+            | ObjectKind::Ellipse { style, .. }
+            | ObjectKind::Path { style, .. } => style,
+        }
+    }
+
     pub fn bounds(&self) -> DocumentRect {
         match &self.kind {
-            ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => *bounds,
+            ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => *bounds,
             ObjectKind::Path { path, .. } => path_bounds(path),
         }
     }
 
     fn set_bounds(&mut self, new_bounds: DocumentRect) {
         match &mut self.kind {
-            ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
+            ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => {
                 *bounds = new_bounds;
             }
             ObjectKind::Path { path, .. } => {
@@ -342,7 +358,7 @@ impl DocumentObject {
 
     fn translate(&mut self, delta: DocumentPoint) {
         match &mut self.kind {
-            ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
+            ObjectKind::Rectangle { bounds, .. } | ObjectKind::Ellipse { bounds, .. } => {
                 *bounds = bounds.translated(delta);
             }
             ObjectKind::Path { path, .. } => {
@@ -470,11 +486,23 @@ impl Document {
     }
 
     pub fn add_rectangle(&mut self, bounds: DocumentRect) -> ObjectId {
-        self.add_object(ObjectKind::Rectangle { bounds })
+        self.add_rectangle_with_style(bounds, ObjectStyle::default())
+    }
+
+    pub fn add_rectangle_with_style(
+        &mut self,
+        bounds: DocumentRect,
+        style: ObjectStyle,
+    ) -> ObjectId {
+        self.add_object(ObjectKind::Rectangle { bounds, style })
     }
 
     pub fn add_ellipse(&mut self, bounds: DocumentRect) -> ObjectId {
-        self.add_object(ObjectKind::Ellipse { bounds })
+        self.add_ellipse_with_style(bounds, ObjectStyle::default())
+    }
+
+    pub fn add_ellipse_with_style(&mut self, bounds: DocumentRect, style: ObjectStyle) -> ObjectId {
+        self.add_object(ObjectKind::Ellipse { bounds, style })
     }
 
     pub fn add_path(&mut self, first_node: BezierNode) -> ObjectId {
@@ -482,14 +510,34 @@ impl Document {
     }
 
     pub fn add_path_with_style(&mut self, first_node: BezierNode, stroke: StrokeStyle) -> ObjectId {
+        self.add_path_with_object_style(
+            first_node,
+            ObjectStyle {
+                stroke,
+                ..ObjectStyle::default()
+            },
+        )
+    }
+
+    pub fn add_path_with_object_style(
+        &mut self,
+        first_node: BezierNode,
+        style: ObjectStyle,
+    ) -> ObjectId {
         self.add_object(ObjectKind::Path {
             path: BezierPath::new(first_node),
-            stroke,
+            style,
         })
     }
 
     pub fn add_fitted_path(&mut self, path: BezierPath, stroke: StrokeStyle) -> ObjectId {
-        self.add_object(ObjectKind::Path { path, stroke })
+        self.add_object(ObjectKind::Path {
+            path,
+            style: ObjectStyle {
+                stroke,
+                ..ObjectStyle::default()
+            },
+        })
     }
 
     pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {
@@ -642,16 +690,32 @@ impl Document {
         let Some(id) = self.selected_object else {
             return;
         };
-        if !self
-            .object(id)
-            .is_some_and(|object| matches!(object.kind, ObjectKind::Path { .. }))
-        {
+        self.edit_object(id, |object| match &mut object.kind {
+            ObjectKind::Rectangle { style, .. }
+            | ObjectKind::Ellipse { style, .. }
+            | ObjectKind::Path { style, .. } => style.stroke.color = color,
+        });
+    }
+
+    pub fn set_selected_stroke_width(&mut self, width: f32) {
+        let Some(id) = self.selected_object else {
             return;
-        }
-        self.edit_object(id, |object| {
-            if let ObjectKind::Path { stroke, .. } = &mut object.kind {
-                stroke.color = color;
-            }
+        };
+        self.edit_object(id, |object| match &mut object.kind {
+            ObjectKind::Rectangle { style, .. }
+            | ObjectKind::Ellipse { style, .. }
+            | ObjectKind::Path { style, .. } => style.stroke.width = width.max(0.1),
+        });
+    }
+
+    pub fn set_selected_fill_color(&mut self, color: DocumentColor) {
+        let Some(id) = self.selected_object else {
+            return;
+        };
+        self.edit_object(id, |object| match &mut object.kind {
+            ObjectKind::Rectangle { style, .. }
+            | ObjectKind::Ellipse { style, .. }
+            | ObjectKind::Path { style, .. } => style.fill = color,
         });
     }
 

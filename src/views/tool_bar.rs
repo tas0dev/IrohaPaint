@@ -37,7 +37,13 @@ pub fn view(active_tool: State<EditorTool>, pen_menu: PopupMenuState) -> impl Vi
     )
 }
 
-pub fn pen_menu(brushes: State<BrushLibrary>, brush_settings: ModalState) -> Menu {
+pub fn pen_menu(
+    brushes: State<BrushLibrary>,
+    brush_settings: ModalState,
+    stroke_color: State<Color>,
+    brush_width: State<f32>,
+    smoothing: State<f32>,
+) -> Menu {
     let library = brushes.get();
     let active = library.active_index();
     let mut menu = Menu::new();
@@ -49,7 +55,21 @@ pub fn pen_menu(brushes: State<BrushLibrary>, brush_settings: ModalState) -> Men
         };
         menu = menu.item(MenuItem::new(label).on_select({
             let brushes = brushes.clone();
-            move || brushes.update(|library| library.select(index))
+            let stroke_color = stroke_color.clone();
+            let brush_width = brush_width.clone();
+            let smoothing = smoothing.clone();
+            move || {
+                brushes.update(|library| library.select(index));
+                let brush = brushes.get().active().clone();
+                stroke_color.set(Color::rgba(
+                    brush.color.red,
+                    brush.color.green,
+                    brush.color.blue,
+                    brush.color.alpha,
+                ));
+                brush_width.set(brush.width);
+                smoothing.set(brush.smoothing);
+            }
         }));
     }
     menu.separator()

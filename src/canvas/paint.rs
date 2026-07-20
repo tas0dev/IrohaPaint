@@ -6,7 +6,7 @@ use viewkit::view::PaintContext;
 
 use crate::document::{
     BezierNode, BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect,
-    NodeComponent, ObjectId, ObjectKind, StrokeCap, StrokeJoin, StrokeStyle,
+    NodeComponent, ObjectId, ObjectKind, ObjectStyle, StrokeCap, StrokeJoin, StrokeStyle,
 };
 use crate::editor::EditorTool;
 
@@ -136,39 +136,43 @@ fn paint_kind(
     context: &mut PaintContext<'_>,
 ) {
     match kind {
-        ObjectKind::Rectangle { bounds } => {
+        ObjectKind::Rectangle { bounds, style } => {
             let rect = transform.document_rect_to_canvas(*bounds, canvas_bounds);
-            context.display_list.push(DrawCommand::FillRect {
-                rect,
-                color: context.theme.colors.elevated_surface,
-            });
+            if style.fill.alpha > 0 {
+                context.display_list.push(DrawCommand::FillRect {
+                    rect,
+                    color: view_color(style.fill),
+                });
+            }
             context.display_list.push(DrawCommand::StrokeRect {
                 rect,
-                color: context.theme.colors.border_strong,
-                width: 1.0,
+                color: view_color(style.stroke.color),
+                width: style.stroke.width * transform.zoom(),
             });
         }
-        ObjectKind::Ellipse { bounds } => {
+        ObjectKind::Ellipse { bounds, style } => {
             let rect = transform.document_rect_to_canvas(*bounds, canvas_bounds);
-            context.display_list.push(DrawCommand::FillEllipse {
-                rect,
-                color: context.theme.colors.elevated_surface,
-            });
+            if style.fill.alpha > 0 {
+                context.display_list.push(DrawCommand::FillEllipse {
+                    rect,
+                    color: view_color(style.fill),
+                });
+            }
             context.display_list.push(DrawCommand::StrokeEllipse {
                 rect,
-                color: context.theme.colors.border_strong,
-                width: 1.0,
+                color: view_color(style.stroke.color),
+                width: style.stroke.width * transform.zoom(),
             });
         }
-        ObjectKind::Path { path, stroke } => {
-            paint_svg_path(path, *stroke, transform, canvas_bounds, context);
+        ObjectKind::Path { path, style } => {
+            paint_svg_path(path, *style, transform, canvas_bounds, context);
         }
     }
 }
 
 fn paint_svg_path(
     path: &BezierPath,
-    stroke: StrokeStyle,
+    style: ObjectStyle,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -182,7 +186,7 @@ fn paint_svg_path(
         path,
         transform,
         canvas_bounds,
-        stroke.width * transform.zoom() / 2.0 + 2.0,
+        style.stroke.width * transform.zoom() / 2.0 + 2.0,
     );
     let mut commands = String::new();
     write_move(
@@ -218,16 +222,40 @@ fn paint_svg_path(
         commands.push('Z');
     }
 
-    paint_svg_commands(
-        &commands,
-        StrokeStyle {
-            width: stroke.width * transform.zoom(),
-            ..stroke
-        },
-        view_color(stroke.color),
-        svg_bounds,
-        context,
+    let fill = if path.is_closed() && style.fill.alpha > 0 {
+        format!(
+            "#{:02X}{:02X}{:02X}",
+            style.fill.red, style.fill.green, style.fill.blue
+        )
+    } else {
+        String::from("none")
+    };
+    let stroke_color = format!(
+        "#{:02X}{:02X}{:02X}",
+        style.stroke.color.red, style.stroke.color.green, style.stroke.color.blue
     );
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="{fill}" fill-opacity="{fill_opacity}" stroke="{stroke}" stroke-opacity="{stroke_opacity}" stroke-width="{stroke_width}" stroke-linecap="{stroke_cap}" stroke-linejoin="{stroke_join}"/></svg>"##,
+        width = svg_bounds.size.width.max(1.0),
+        height = svg_bounds.size.height.max(1.0),
+        fill_opacity = style.fill.alpha as f32 / 255.0,
+        stroke = stroke_color,
+        stroke_opacity = style.stroke.color.alpha as f32 / 255.0,
+        stroke_width = (style.stroke.width * transform.zoom()).max(0.1),
+        stroke_cap = stroke_cap_name(style.stroke.cap),
+        stroke_join = stroke_join_name(style.stroke.join),
+    );
+    let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
+        return;
+    };
+    context.display_list.push(DrawCommand::DrawSvg {
+        command: SvgCommand {
+            svg,
+            bounds: svg_bounds,
+            opacity: 1.0,
+            tint: None,
+        },
+    });
 }
 
 fn view_color(color: DocumentColor) -> viewkit::prelude::Color {
@@ -274,11 +302,18 @@ fn paint_draft(
             kind,
             start,
             current,
+            style,
         } => {
             let bounds = DocumentRect::from_points(*start, *current);
             let kind = match kind {
-                ShapeDraftKind::Rectangle => ObjectKind::Rectangle { bounds },
-                ShapeDraftKind::Ellipse => ObjectKind::Ellipse { bounds },
+                ShapeDraftKind::Rectangle => ObjectKind::Rectangle {
+                    bounds,
+                    style: *style,
+                },
+                ShapeDraftKind::Ellipse => ObjectKind::Ellipse {
+                    bounds,
+                    style: *style,
+                },
             };
             paint_kind(&kind, transform, canvas_bounds, context);
             paint_selection(bounds, transform, canvas_bounds, context);
@@ -290,14 +325,17 @@ fn paint_draft(
         } => {
             paint_svg_path(
                 path,
-                brush.stroke_style(),
+                ObjectStyle {
+                    stroke: brush.stroke_style(),
+                    ..ObjectStyle::default()
+                },
                 transform,
                 canvas_bounds,
                 context,
             );
         }
         Interaction::PlacingPathNode {
-            path_id: _None,
+            path_id: None,
             position,
             handle_out,
             ..

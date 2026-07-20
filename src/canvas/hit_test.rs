@@ -170,10 +170,10 @@ pub fn is_first_path_node(path: &BezierPath, point: DocumentPoint, tolerance: f3
 
 fn kind_contains(kind: &ObjectKind, point: DocumentPoint, tolerance: f32) -> bool {
     match kind {
-        ObjectKind::Rectangle { bounds } => expanded(*bounds, tolerance).contains(point),
-        ObjectKind::Ellipse { bounds } => ellipse_contains(*bounds, point, tolerance),
-        ObjectKind::Path { path, stroke } => {
-            bezier_path_contains(path, point, tolerance + stroke.width / 2.0)
+        ObjectKind::Rectangle { bounds, .. } => expanded(*bounds, tolerance).contains(point),
+        ObjectKind::Ellipse { bounds, .. } => ellipse_contains(*bounds, point, tolerance),
+        ObjectKind::Path { path, style } => {
+            bezier_path_contains(path, point, tolerance + style.stroke.width / 2.0)
         }
     }
 }

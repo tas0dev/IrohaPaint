@@ -8,8 +8,9 @@ use cosmic_text::{
 };
 use mochi_user_syscall as syscall;
 use tiny_skia::{
-    Color as SkiaColor, FillRule, FilterQuality, Mask, Paint, Path, PathBuilder, Pixmap,
-    PixmapPaint, PixmapRef, Rect as SkiaRect, Stroke, Transform,
+    Color as SkiaColor, FillRule, FilterQuality, GradientStop as SkiaGradientStop, LinearGradient,
+    Mask, Paint, Path, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Point as SkiaPoint,
+    Rect as SkiaRect, SpreadMode, Stroke, Transform,
 };
 
 use crate::draw_command::{
@@ -667,8 +668,8 @@ where
                 CURSOR_WIDTH as f32,
                 CURSOR_HEIGHT as f32,
             )
-                .intersection(bounds)
-                .unwrap_or_else(|| Rect::new(self.pointer_x, self.pointer_y, 1.0, 1.0)),
+            .intersection(bounds)
+            .unwrap_or_else(|| Rect::new(self.pointer_x, self.pointer_y, 1.0, 1.0)),
         )
     }
 
@@ -1576,6 +1577,23 @@ fn render_display_list(
                 let paint = solid_paint(*color);
                 pixmap.fill_rect(rect, &paint, transform, clip_stack.last());
             }
+            DrawCommand::FillLinearGradient {
+                rect,
+                start,
+                end,
+                stops,
+            } => {
+                if rect.intersection(dirty_bounds).is_none() {
+                    continue;
+                }
+                let Some(rect) = to_skia_rect(*rect) else {
+                    continue;
+                };
+                let Some(paint) = linear_gradient_paint(*start, *end, stops) else {
+                    continue;
+                };
+                pixmap.fill_rect(rect, &paint, transform, clip_stack.last());
+            }
             DrawCommand::FillRoundedRect {
                 rect,
                 radius,
@@ -2215,6 +2233,36 @@ fn create_path_clip_mask(
     }
 
     Ok(mask)
+}
+
+fn linear_gradient_paint(
+    start: crate::geometry::Point,
+    end: crate::geometry::Point,
+    stops: &[crate::draw_command::GradientStop],
+) -> Option<Paint<'static>> {
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.shader = LinearGradient::new(
+        SkiaPoint::from_xy(start.x, start.y),
+        SkiaPoint::from_xy(end.x, end.y),
+        stops
+            .iter()
+            .map(|stop| {
+                SkiaGradientStop::new(
+                    stop.offset.clamp(0.0, 1.0),
+                    SkiaColor::from_rgba8(
+                        stop.color.red,
+                        stop.color.green,
+                        stop.color.blue,
+                        stop.color.alpha,
+                    ),
+                )
+            })
+            .collect(),
+        SpreadMode::Pad,
+        Transform::identity(),
+    )?;
+    Some(paint)
 }
 
 fn solid_paint(color: Color) -> Paint<'static> {

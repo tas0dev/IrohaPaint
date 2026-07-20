@@ -59,24 +59,37 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
 
 fn write_object(source: &mut String, kind: &ObjectKind) {
     match kind {
-        ObjectKind::Rectangle { bounds } => {
+        ObjectKind::Rectangle { bounds, style } => {
             let _ = write!(
                 source,
-                r##"<rect x="{:.3}" y="{:.3}" width="{:.3}" height="{:.3}" fill="none" stroke="#000000" stroke-width="1"/>"##,
-                bounds.x, bounds.y, bounds.width, bounds.height,
+                r##"<rect x="{:.3}" y="{:.3}" width="{:.3}" height="{:.3}" fill="{}" fill-opacity="{:.3}" stroke="{}" stroke-opacity="{:.3}" stroke-width="{:.3}"/>"##,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                fill_name(style.fill),
+                style.fill.alpha as f32 / 255.0,
+                color_hex(style.stroke.color),
+                style.stroke.color.alpha as f32 / 255.0,
+                style.stroke.width.max(0.0),
             );
         }
-        ObjectKind::Ellipse { bounds } => {
+        ObjectKind::Ellipse { bounds, style } => {
             let _ = write!(
                 source,
-                r##"<ellipse cx="{:.3}" cy="{:.3}" rx="{:.3}" ry="{:.3}" fill="none" stroke="#000000" stroke-width="1"/>"##,
+                r##"<ellipse cx="{:.3}" cy="{:.3}" rx="{:.3}" ry="{:.3}" fill="{}" fill-opacity="{:.3}" stroke="{}" stroke-opacity="{:.3}" stroke-width="{:.3}"/>"##,
                 bounds.x + bounds.width / 2.0,
                 bounds.y + bounds.height / 2.0,
                 bounds.width / 2.0,
                 bounds.height / 2.0,
+                fill_name(style.fill),
+                style.fill.alpha as f32 / 255.0,
+                color_hex(style.stroke.color),
+                style.stroke.color.alpha as f32 / 255.0,
+                style.stroke.width.max(0.0),
             );
         }
-        ObjectKind::Path { path, stroke } => {
+        ObjectKind::Path { path, style } => {
             if path.nodes().len() < 2 {
                 return;
             }
@@ -84,12 +97,18 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
             write_path_commands(&mut commands, path);
             let _ = write!(
                 source,
-                r##"<path d="{commands}" fill="none" stroke="{color}" stroke-opacity="{opacity:.3}" stroke-width="{width:.3}" stroke-linecap="{cap}" stroke-linejoin="{join}"/>"##,
-                color = color_hex(stroke.color),
-                opacity = stroke.color.alpha as f32 / 255.0,
-                width = stroke.width.max(0.0),
-                cap = cap_name(stroke.cap),
-                join = join_name(stroke.join),
+                r##"<path d="{commands}" fill="{fill}" fill-opacity="{fill_opacity:.3}" stroke="{color}" stroke-opacity="{opacity:.3}" stroke-width="{width:.3}" stroke-linecap="{cap}" stroke-linejoin="{join}"/>"##,
+                fill = if path.is_closed() {
+                    fill_name(style.fill)
+                } else {
+                    "none".to_owned()
+                },
+                fill_opacity = style.fill.alpha as f32 / 255.0,
+                color = color_hex(style.stroke.color),
+                opacity = style.stroke.color.alpha as f32 / 255.0,
+                width = style.stroke.width.max(0.0),
+                cap = cap_name(style.stroke.cap),
+                join = join_name(style.stroke.join),
             );
         }
     }
@@ -97,6 +116,14 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
 
 fn color_hex(color: DocumentColor) -> String {
     format!("#{:02X}{:02X}{:02X}", color.red, color.green, color.blue)
+}
+
+fn fill_name(color: DocumentColor) -> String {
+    if color.alpha == 0 {
+        String::from("none")
+    } else {
+        color_hex(color)
+    }
 }
 
 fn write_path_commands(commands: &mut String, path: &BezierPath) {
@@ -143,11 +170,11 @@ fn artwork_bounds(document: &Document) -> Option<DocumentRect> {
 
 fn object_bounds(kind: &ObjectKind) -> Option<DocumentRect> {
     match kind {
-        ObjectKind::Rectangle { bounds } | ObjectKind::Ellipse { bounds } => {
-            Some(expand(*bounds, 0.5))
+        ObjectKind::Rectangle { bounds, style } | ObjectKind::Ellipse { bounds, style } => {
+            Some(expand(*bounds, style.stroke.width.max(0.0) / 2.0))
         }
-        ObjectKind::Path { path, stroke } => {
-            path_curve_bounds(path).map(|bounds| expand(bounds, stroke.width.max(0.0) / 2.0))
+        ObjectKind::Path { path, style } => {
+            path_curve_bounds(path).map(|bounds| expand(bounds, style.stroke.width.max(0.0) / 2.0))
         }
     }
 }

@@ -6,8 +6,9 @@ use std::rc::Rc;
 
 use softbuffer::{Context, SoftBufferError, Surface};
 use tiny_skia::{
-    Color as SkiaColor, FillRule, FilterQuality, Mask, Paint, Path, PathBuilder, Pixmap,
-    PixmapPaint, PixmapRef, Rect as SkiaRect, Stroke, Transform,
+    Color as SkiaColor, FillRule, FilterQuality, GradientStop as SkiaGradientStop, LinearGradient,
+    Mask, Paint, Path, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Point as SkiaPoint,
+    Rect as SkiaRect, SpreadMode, Stroke, Transform,
 };
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
@@ -235,6 +236,24 @@ impl Renderer for SoftwareRenderer {
 
                     let paint = solid_paint(*color);
 
+                    pixmap.fill_rect(rect, &paint, transform, clip_stack.last());
+                }
+
+                DrawCommand::FillLinearGradient {
+                    rect,
+                    start,
+                    end,
+                    stops,
+                } => {
+                    if rect.intersection(dirty_bounds).is_none() {
+                        continue;
+                    }
+                    let Some(rect) = to_skia_rect(*rect) else {
+                        continue;
+                    };
+                    let Some(paint) = linear_gradient_paint(*start, *end, stops) else {
+                        continue;
+                    };
                     pixmap.fill_rect(rect, &paint, transform, clip_stack.last());
                 }
 
@@ -882,6 +901,36 @@ fn copy_pixmap_to_surface(
     buffer.present()?;
 
     Ok(())
+}
+
+fn linear_gradient_paint(
+    start: crate::geometry::Point,
+    end: crate::geometry::Point,
+    stops: &[crate::draw_command::GradientStop],
+) -> Option<Paint<'static>> {
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.shader = LinearGradient::new(
+        SkiaPoint::from_xy(start.x, start.y),
+        SkiaPoint::from_xy(end.x, end.y),
+        stops
+            .iter()
+            .map(|stop| {
+                SkiaGradientStop::new(
+                    stop.offset.clamp(0.0, 1.0),
+                    SkiaColor::from_rgba8(
+                        stop.color.red,
+                        stop.color.green,
+                        stop.color.blue,
+                        stop.color.alpha,
+                    ),
+                )
+            })
+            .collect(),
+        SpreadMode::Pad,
+        Transform::identity(),
+    )?;
+    Some(paint)
 }
 
 fn solid_paint(color: Color) -> Paint<'static> {

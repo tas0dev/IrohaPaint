@@ -17,6 +17,13 @@ pub enum DrawCommand {
         color: Color,
     },
 
+    FillLinearGradient {
+        rect: Rect,
+        start: crate::geometry::Point,
+        end: crate::geometry::Point,
+        stops: Vec<GradientStop>,
+    },
+
     FillRoundedRect {
         rect: Rect,
         radius: f32,
@@ -69,6 +76,18 @@ pub enum DrawCommand {
     },
 
     PopClip,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+impl GradientStop {
+    pub const fn new(offset: f32, color: Color) -> Self {
+        Self { offset, color }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

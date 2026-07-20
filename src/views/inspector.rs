@@ -2,20 +2,43 @@ use viewkit::prelude::*;
 
 use crate::brush::BrushLibrary;
 use crate::canvas::CanvasController;
-use crate::document::{Document, DocumentColor, NodeKind};
+use crate::document::{Document, DocumentColor, NodeKind, ObjectId};
+use crate::editor::EditorTool;
 
 pub struct InspectorBindings {
-    pub stroke_hex: State<String>,
+    pub stroke_color: State<Color>,
+    pub fill_color: State<Color>,
+    pub color_target: State<usize>,
+    pub brush_width: State<f32>,
+    pub smoothing: State<f32>,
+    pub inspected_object: State<Option<ObjectId>>,
 }
 
 pub fn view(
     document: State<Document>,
     canvas: CanvasController,
     brushes: State<BrushLibrary>,
+    active_tool: State<EditorTool>,
     bindings: InspectorBindings,
 ) -> impl View + 'static {
-    let InspectorBindings { stroke_hex } = bindings;
     let current_document = document.get();
+    let selected_object = current_document.selected_object();
+    if bindings.inspected_object.get() != selected_object {
+        bindings.inspected_object.set(selected_object);
+        if let Some(style) = selected_object
+            .and_then(|id| current_document.object(id))
+            .map(|object| object.style())
+        {
+            bindings.stroke_color.set(view_color(style.stroke.color));
+            bindings.fill_color.set(view_color(style.fill));
+            bindings.brush_width.set(style.stroke.width);
+        } else {
+            let brush = brushes.get().active().clone();
+            bindings.stroke_color.set(view_color(brush.color));
+            bindings.brush_width.set(brush.width);
+            bindings.smoothing.set(brush.smoothing);
+        }
+    }
     let selected_layer = current_document.selected_layer();
     let layer_rows = current_document
         .layers()
@@ -26,65 +49,112 @@ pub fn view(
                 .selected(selected_layer == Some(index))
                 .on_select({
                     let document = document.clone();
-
                     move || document.update(|document| document.select_layer(index))
                 })
         })
         .collect::<Vec<_>>();
+    let tool = active_tool.get();
+    let editing_fill = bindings.color_target.get() == 1;
+    let selected_color = if editing_fill {
+        bindings.fill_color.get()
+    } else {
+        bindings.stroke_color.get()
+    };
 
-    Padding::all(12.0).content(
-        VStack::new()
-            .alignment(StackAlignment::Stretch)
-            .gap(StackGap::Medium)
-            .child(Text::new("Layers").weight(700))
-            .child(Divider::new())
-            .children(layer_rows)
-            .child(Text::new("Properties").weight(700))
-            .child(Divider::new())
-            .child(Text::new("Brush").weight(700))
-            .child(Text::new(format!(
-                "{} — {:.1} px",
-                brushes.get().active().name,
-                brushes.get().active().width
-            )))
-            .child(TextField::new(stroke_hex.binding()).placeholder("Color #RRGGBBAA"))
-            .child(Button::new("Set Color").on_click({
-                let brushes = brushes.clone();
-                let stroke_hex = stroke_hex.clone();
+    let mut content = VStack::new()
+        .alignment(StackAlignment::Stretch)
+        .gap(StackGap::Medium)
+        .child(Text::new("Layers").weight(700))
+        .child(Divider::new())
+        .children(layer_rows)
+        .child(Text::new("Appearance").weight(700))
+        .child(Divider::new())
+        .child(
+            SegmentedControl::new(bindings.color_target.binding())
+                .item(0, "Stroke")
+                .item(1, "Fill"),
+        )
+        .child(Text::new(color_label(selected_color)));
+
+    content = if editing_fill {
+        content
+            .child(ColorPicker::new(bindings.fill_color.binding()).on_commit({
+                let document = document.clone();
+                move |color| {
+                    document
+                        .update(|document| document.set_selected_fill_color(document_color(color)));
+                }
+            }))
+            .child(Button::new("No Fill").on_click({
+                let fill_color = bindings.fill_color.clone();
                 let document = document.clone();
                 move || {
-                    if let Some(color) = DocumentColor::from_hex(&stroke_hex.get()) {
+                    fill_color.set(Color::TRANSPARENT);
+                    document.update(|document| {
+                        document.set_selected_fill_color(DocumentColor::TRANSPARENT)
+                    });
+                }
+            }))
+    } else {
+        content
+            .child(
+                ColorPicker::new(bindings.stroke_color.binding()).on_commit({
+                    let brushes = brushes.clone();
+                    let document = document.clone();
+                    move |color| {
+                        let color = document_color(color);
                         brushes
                             .update(|library| library.update_active(|brush| brush.color = color));
                         document.update(|document| document.set_selected_stroke_color(color));
                     }
-                }
-            }))
-            .child(
-                HStack::new()
-                    .gap(StackGap::ExtraSmall)
-                    .child(brush_button("Thinner", brushes.clone(), |brush| {
-                        brush.width -= 0.5
-                    }))
-                    .child(brush_button("Thicker", brushes.clone(), |brush| {
-                        brush.width += 0.5
-                    })),
+                }),
             )
             .child(Text::new(format!(
-                "Stabilizer — {:.0}%",
-                brushes.get().active().smoothing * 100.0
+                "Size — {:.1} px",
+                bindings.brush_width.get()
             )))
             .child(
-                HStack::new()
-                    .gap(StackGap::ExtraSmall)
-                    .child(brush_button("Less", brushes.clone(), |brush| {
-                        brush.smoothing -= 0.1;
-                    }))
-                    .child(brush_button("More", brushes.clone(), |brush| {
-                        brush.smoothing += 0.1;
-                    })),
+                Slider::new(bindings.brush_width.binding())
+                    .range(0.5..=32.0)
+                    .step(0.5)
+                    .on_commit({
+                        let brushes = brushes.clone();
+                        let document = document.clone();
+                        move |width| {
+                            brushes.update(|library| {
+                                library.update_active(|brush| brush.width = width)
+                            });
+                            document.update(|document| document.set_selected_stroke_width(width));
+                        }
+                    }),
             )
-            .child(Text::new("Node Editing").weight(700))
+    };
+
+    if tool == EditorTool::Pencil {
+        content = content
+            .child(Text::new(format!(
+                "Stabilizer — {:.0}%",
+                bindings.smoothing.get() * 100.0
+            )))
+            .child(
+                Slider::new(bindings.smoothing.binding())
+                    .range(0.0..=1.0)
+                    .step(0.05)
+                    .on_commit({
+                        let brushes = brushes.clone();
+                        move |smoothing| {
+                            brushes.update(|library| {
+                                library.update_active(|brush| brush.smoothing = smoothing)
+                            });
+                        }
+                    }),
+            );
+    }
+
+    if tool == EditorTool::NodeEdit {
+        content = content
+            .child(Text::new("Nodes").weight(700))
+            .child(Divider::new())
             .child(
                 HStack::new()
                     .gap(StackGap::ExtraSmall)
@@ -135,21 +205,26 @@ pub fn view(
                             }
                         }
                     })),
-            )
-            .child(Text::new(
-                "Click a curve to add a node without changing its shape.",
-            )),
-    )
+            );
+    }
+
+    Padding::all(12.0).content(content)
 }
 
-fn brush_button(
-    title: &'static str,
-    brushes: State<BrushLibrary>,
-    update: impl Fn(&mut crate::brush::BrushDefinition) + 'static,
-) -> Button {
-    Button::new(title).on_click(move || {
-        brushes.update(|library| library.update_active(|brush| update(brush)));
-    })
+fn color_label(color: Color) -> String {
+    if color.alpha == 0 {
+        String::from("None")
+    } else {
+        format!("#{:02X}{:02X}{:02X}", color.red, color.green, color.blue)
+    }
+}
+
+fn document_color(color: Color) -> DocumentColor {
+    DocumentColor::rgba(color.red, color.green, color.blue, color.alpha)
+}
+
+fn view_color(color: DocumentColor) -> Color {
+    Color::rgba(color.red, color.green, color.blue, color.alpha)
 }
 
 fn node_kind_button(

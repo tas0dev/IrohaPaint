@@ -1,11 +1,12 @@
 use viewkit::event::{EventContext, EventResult, ViewEvent};
 use viewkit::platform::{ButtonState, KeyCode, KeyModifiers, PointerButton};
-use viewkit::prelude::{CursorIcon, Point, Rect, Size, State, View};
+use viewkit::prelude::{Color, CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
 use crate::brush::BrushLibrary;
 use crate::document::{
-    BezierNode, CanvasSize, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectKind,
+    BezierNode, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, NodeComponent,
+    ObjectKind, ObjectStyle,
 };
 use crate::editor::EditorTool;
 
@@ -25,6 +26,7 @@ pub struct EditorCanvas {
     active_tool: State<EditorTool>,
     controller: CanvasController,
     brushes: State<BrushLibrary>,
+    fill_color: State<Color>,
 }
 
 impl EditorCanvas {
@@ -33,12 +35,14 @@ impl EditorCanvas {
         active_tool: State<EditorTool>,
         controller: CanvasController,
         brushes: State<BrushLibrary>,
+        fill_color: State<Color>,
     ) -> Self {
         Self {
             document,
             active_tool,
             controller,
             brushes,
+            fill_color,
         }
     }
 
@@ -202,6 +206,7 @@ impl EditorCanvas {
                     kind: ShapeDraftKind::Rectangle,
                     start: document_point,
                     current: document_point,
+                    style: self.active_object_style(),
                 };
             }
             EditorTool::Ellipse => {
@@ -212,6 +217,7 @@ impl EditorCanvas {
                     kind: ShapeDraftKind::Ellipse,
                     start: document_point,
                     current: document_point,
+                    style: self.active_object_style(),
                 };
             }
             EditorTool::Pencil => {
@@ -360,6 +366,7 @@ impl EditorCanvas {
                 kind,
                 start,
                 current,
+                style,
             } => {
                 let bounds = DocumentRect::from_points(start, current);
                 if bounds.width * zoom < MIN_DRAG_SIZE || bounds.height * zoom < MIN_DRAG_SIZE {
@@ -367,10 +374,10 @@ impl EditorCanvas {
                 }
                 self.document.update(|document| match kind {
                     ShapeDraftKind::Rectangle => {
-                        document.add_rectangle(bounds);
+                        document.add_rectangle_with_style(bounds, style);
                     }
                     ShapeDraftKind::Ellipse => {
-                        document.add_ellipse(bounds);
+                        document.add_ellipse_with_style(bounds, style);
                     }
                 });
             }
@@ -405,9 +412,9 @@ impl EditorCanvas {
                         .update(|document| document.append_path_node(id, node));
                     id
                 } else {
-                    let stroke = self.brushes.get().active().stroke_style();
+                    let style = self.active_object_style();
                     self.document
-                        .update(|document| document.add_path_with_style(node, stroke))
+                        .update(|document| document.add_path_with_object_style(node, style))
                 };
                 let node_index = self
                     .document
@@ -528,6 +535,13 @@ impl EditorCanvas {
                 width,
                 height,
             }),
+        }
+    }
+
+    fn active_object_style(&self) -> ObjectStyle {
+        ObjectStyle {
+            stroke: self.brushes.get().active().stroke_style(),
+            fill: document_color(self.fill_color.get()),
         }
     }
 
@@ -807,6 +821,10 @@ fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {
         point.x.clamp(bounds.x, bounds.x + bounds.width),
         point.y.clamp(bounds.y, bounds.y + bounds.height),
     )
+}
+
+fn document_color(color: Color) -> DocumentColor {
+    DocumentColor::rgba(color.red, color.green, color.blue, color.alpha)
 }
 
 fn path_node_position(kind: &ObjectKind, index: usize) -> Option<DocumentPoint> {

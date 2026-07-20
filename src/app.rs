@@ -2,7 +2,7 @@ use viewkit::prelude::*;
 
 use crate::brush::BrushLibrary;
 use crate::canvas::{CanvasController, EditorCanvas};
-use crate::document::Document;
+use crate::document::{Document, ObjectId};
 use crate::editor::EditorTool;
 use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
 
@@ -19,8 +19,13 @@ pub struct IrohaPaint {
     canvas_width: State<String>,
     canvas_height: State<String>,
     background_hex: State<String>,
-    stroke_hex: State<String>,
     brush_name: State<String>,
+    stroke_color: State<Color>,
+    fill_color: State<Color>,
+    color_target: State<usize>,
+    brush_width: State<f32>,
+    smoothing: State<f32>,
+    inspected_object: State<Option<ObjectId>>,
 }
 
 impl App for IrohaPaint {
@@ -40,8 +45,13 @@ impl App for IrohaPaint {
             canvas_width: State::new(String::from("1200")),
             canvas_height: State::new(String::from("1200")),
             background_hex: State::new(String::from("#00000000")),
-            stroke_hex: State::new(String::from("#000000FF")),
             brush_name: State::new(String::from("Custom Brush")),
+            stroke_color: State::new(Color::BLACK),
+            fill_color: State::new(Color::TRANSPARENT),
+            color_target: State::new(0),
+            brush_width: State::new(2.5),
+            smoothing: State::new(0.72),
+            inspected_object: State::new(None),
         }
     }
 
@@ -76,6 +86,7 @@ impl App for IrohaPaint {
                             self.active_tool.clone(),
                             self.canvas.clone(),
                             self.brushes.clone(),
+                            self.fill_color.clone(),
                         )
                         .layout()
                         .flex_grow(1.0),
@@ -85,8 +96,14 @@ impl App for IrohaPaint {
                         self.document.clone(),
                         self.canvas.clone(),
                         self.brushes.clone(),
+                        self.active_tool.clone(),
                         inspector::InspectorBindings {
-                            stroke_hex: self.stroke_hex.clone(),
+                            stroke_color: self.stroke_color.clone(),
+                            fill_color: self.fill_color.clone(),
+                            color_target: self.color_target.clone(),
+                            brush_width: self.brush_width.clone(),
+                            smoothing: self.smoothing.clone(),
+                            inspected_object: self.inspected_object.clone(),
                         },
                     ))
                     .layout()
@@ -97,7 +114,13 @@ impl App for IrohaPaint {
             self.export_status.clone(),
             self.document_settings.clone(),
         );
-        let pen_menu = tool_bar::pen_menu(self.brushes.clone(), self.brush_settings.clone());
+        let pen_menu = tool_bar::pen_menu(
+            self.brushes.clone(),
+            self.brush_settings.clone(),
+            self.stroke_color.clone(),
+            self.brush_width.clone(),
+            self.smoothing.clone(),
+        );
         let content = PopupMenuHost::new(content, pen_menu, self.pen_menu.clone());
         let content = PopupMenuHost::new(content, menu, self.file_menu.clone());
         let document_settings = settings_dialog::document_settings(
