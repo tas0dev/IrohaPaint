@@ -34,13 +34,14 @@ pub struct NodeHit {
 
 pub fn path_node_at(
     path: &BezierPath,
-    selected_node: Option<usize>,
+    selected_nodes: &[usize],
     point: DocumentPoint,
     tolerance: f32,
 ) -> Option<NodeHit> {
-    if let Some(index) = selected_node
-        && let Some(node) = path.nodes().get(index)
-    {
+    for &index in selected_nodes {
+        let Some(node) = path.nodes().get(index) else {
+            continue;
+        };
         for (component, handle) in [
             (NodeComponent::HandleIn, node.handle_in),
             (NodeComponent::HandleOut, node.handle_out),

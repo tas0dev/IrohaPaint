@@ -91,6 +91,7 @@ pub struct DesktopBackend<A> {
     renderer: Option<SoftwareRenderer>,
 
     shift_pressed: bool,
+    alt_pressed: bool,
     shortcut_pressed: bool,
 
     runtime_error: Option<DesktopBackendError>,
@@ -111,6 +112,7 @@ where
             renderer: None,
 
             shift_pressed: false,
+            alt_pressed: false,
             shortcut_pressed: false,
 
             runtime_error: None,
@@ -320,6 +322,7 @@ where
             WindowEvent::Focused(focused) => {
                 if !focused {
                     self.shift_pressed = false;
+                    self.alt_pressed = false;
                     self.shortcut_pressed = false;
                 }
 
@@ -346,8 +349,17 @@ where
                 let state = modifiers.state();
 
                 self.shift_pressed = state.shift_key();
+                self.alt_pressed = state.alt_key();
 
                 self.shortcut_pressed = state.control_key() || state.super_key();
+
+                self.emit(PlatformEvent::ModifiersChanged {
+                    modifiers: KeyModifiers {
+                        shift: self.shift_pressed,
+                        alt: self.alt_pressed,
+                        shortcut: self.shortcut_pressed,
+                    },
+                });
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
@@ -396,6 +408,7 @@ where
                         state: convert_button_state(event.state),
                         modifiers: KeyModifiers {
                             shift: self.shift_pressed,
+                            alt: self.alt_pressed,
                             shortcut: self.shortcut_pressed,
                         },
                         repeat: event.repeat,

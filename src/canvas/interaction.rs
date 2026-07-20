@@ -73,8 +73,17 @@ pub enum Interaction {
         id: ObjectId,
         original: ObjectKind,
         node_index: usize,
+        node_indices: Vec<usize>,
         component: NodeComponent,
+        start: DocumentPoint,
         current: DocumentPoint,
+        independent: bool,
+    },
+    SelectingNodes {
+        id: ObjectId,
+        start: DocumentPoint,
+        current: DocumentPoint,
+        additive: bool,
     },
     Panning {
         start_canvas: Point,
@@ -121,13 +130,19 @@ impl Interaction {
                 id,
                 original,
                 node_index,
+                node_indices,
                 component,
+                start,
                 current,
+                independent,
             } if *id == object_id => Some(edited_path_kind(
                 original,
                 *node_index,
+                node_indices,
                 *component,
+                *start,
                 *current,
+                *independent,
             )),
             Self::PlacingPathNode {
                 path_id: Some(id),
@@ -241,12 +256,14 @@ fn transformed_path(
         position: transform(first.position),
         handle_in: transform(first.handle_in),
         handle_out: transform(first.handle_out),
+        kind: first.kind,
     });
     for node in nodes {
         transformed.push_node(BezierNode {
             position: transform(node.position),
             handle_in: transform(node.handle_in),
             handle_out: transform(node.handle_out),
+            kind: node.kind,
         });
     }
     if path.is_closed() {
@@ -258,14 +275,24 @@ fn transformed_path(
 fn edited_path_kind(
     original: &ObjectKind,
     node_index: usize,
+    node_indices: &[usize],
     component: NodeComponent,
+    start: DocumentPoint,
     point: DocumentPoint,
+    independent: bool,
 ) -> ObjectKind {
     let ObjectKind::Path { path, stroke } = original else {
         return original.clone();
     };
     let mut path = path.clone();
-    path.edit_node(node_index, component, point);
+    if component == NodeComponent::Anchor {
+        path.translate_nodes(
+            node_indices,
+            DocumentPoint::new(point.x - start.x, point.y - start.y),
+        );
+    } else {
+        path.edit_node(node_index, component, point, independent);
+    }
     ObjectKind::Path {
         path,
         stroke: *stroke,

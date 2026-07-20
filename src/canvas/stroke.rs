@@ -1,4 +1,4 @@
-use crate::document::{BezierNode, BezierPath, DocumentPoint};
+use crate::document::{BezierNode, BezierPath, DocumentPoint, NodeKind};
 
 pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<BezierPath> {
     if points.len() < 2 {
@@ -40,6 +40,11 @@ pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<Bez
                 position: *position,
                 handle_in,
                 handle_out,
+                kind: if index == 0 || index == last_index {
+                    NodeKind::Corner
+                } else {
+                    NodeKind::Smooth
+                },
             }
         })
         .collect();

@@ -52,6 +52,7 @@ pub struct BezierNode {
     pub position: DocumentPoint,
     pub handle_in: DocumentPoint,
     pub handle_out: DocumentPoint,
+    pub kind: NodeKind,
 }
 
 impl BezierNode {
@@ -60,6 +61,7 @@ impl BezierNode {
             position,
             handle_in: position,
             handle_out: position,
+            kind: NodeKind::Corner,
         }
     }
 
@@ -68,8 +70,17 @@ impl BezierNode {
             position,
             handle_in: mirror_point(handle_out, position),
             handle_out,
+            kind: NodeKind::Symmetric,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NodeKind {
+    #[default]
+    Corner,
+    Smooth,
+    Symmetric,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -119,6 +130,7 @@ impl BezierPath {
         node_index: usize,
         component: NodeComponent,
         point: DocumentPoint,
+        independent: bool,
     ) {
         let Some(node) = self.nodes.get_mut(node_index) else {
             return;
@@ -133,11 +145,21 @@ impl BezierPath {
             }
             NodeComponent::HandleIn => {
                 node.handle_in = point;
-                node.handle_out = mirror_point(point, node.position);
+                constrain_opposite_handle(node, NodeComponent::HandleIn, independent);
             }
             NodeComponent::HandleOut => {
                 node.handle_out = point;
-                node.handle_in = mirror_point(point, node.position);
+                constrain_opposite_handle(node, NodeComponent::HandleOut, independent);
+            }
+        }
+    }
+
+    pub(crate) fn translate_nodes(&mut self, indices: &[usize], delta: DocumentPoint) {
+        for (index, node) in self.nodes.iter_mut().enumerate() {
+            if indices.contains(&index) {
+                translate_point(&mut node.position, delta);
+                translate_point(&mut node.handle_in, delta);
+                translate_point(&mut node.handle_out, delta);
             }
         }
     }
@@ -379,16 +401,35 @@ impl Document {
         node_index: usize,
         component: NodeComponent,
         point: DocumentPoint,
+        independent: bool,
     ) {
         self.edit_object(id, |object| {
             let ObjectKind::Path { path, .. } = &mut object.kind else {
                 return;
             };
-            path.edit_node(node_index, component, point);
+            path.edit_node(node_index, component, point, independent);
+        });
+    }
+
+    pub fn translate_path_nodes(
+        &mut self,
+        id: ObjectId,
+        node_indices: &[usize],
+        delta: DocumentPoint,
+    ) {
+        self.edit_object(id, |object| {
+            let ObjectKind::Path { path, .. } = &mut object.kind else {
+                return;
+            };
+            path.translate_nodes(node_indices, delta);
         });
     }
 
     pub fn remove_path_node(&mut self, id: ObjectId, node_index: usize) {
+        self.remove_path_nodes(id, &[node_index]);
+    }
+
+    pub fn remove_path_nodes(&mut self, id: ObjectId, node_indices: &[usize]) {
         let Some((layer_index, object_index)) = self.find_object_index(id) else {
             return;
         };
@@ -396,7 +437,7 @@ impl Document {
         else {
             return;
         };
-        if node_index >= path.nodes.len() {
+        if node_indices.is_empty() || !node_indices.iter().any(|index| *index < path.nodes.len()) {
             return;
         }
 
@@ -406,7 +447,14 @@ impl Document {
         else {
             unreachable!();
         };
-        path.nodes.remove(node_index);
+        let mut indices = node_indices.to_vec();
+        indices.sort_unstable();
+        indices.dedup();
+        for index in indices.into_iter().rev() {
+            if index < path.nodes.len() {
+                path.nodes.remove(index);
+            }
+        }
         if path.nodes.is_empty() {
             self.layers[layer_index].objects.remove(object_index);
             self.selected_object = None;
@@ -572,6 +620,42 @@ fn scale_point(point: &mut DocumentPoint, old_bounds: DocumentRect, new_bounds: 
 
 fn mirror_point(point: DocumentPoint, center: DocumentPoint) -> DocumentPoint {
     DocumentPoint::new(center.x * 2.0 - point.x, center.y * 2.0 - point.y)
+}
+
+fn constrain_opposite_handle(
+    node: &mut BezierNode,
+    moved_component: NodeComponent,
+    independent: bool,
+) {
+    if independent {
+        node.kind = NodeKind::Corner;
+        return;
+    }
+
+    let (moved, opposite) = match moved_component {
+        NodeComponent::HandleIn => (node.handle_in, &mut node.handle_out),
+        NodeComponent::HandleOut => (node.handle_out, &mut node.handle_in),
+        NodeComponent::Anchor => return,
+    };
+    match node.kind {
+        NodeKind::Corner => {}
+        NodeKind::Symmetric => *opposite = mirror_point(moved, node.position),
+        NodeKind::Smooth => {
+            let x = moved.x - node.position.x;
+            let y = moved.y - node.position.y;
+            let length = (x * x + y * y).sqrt();
+            if length <= f32::EPSILON {
+                return;
+            }
+            let opposite_length = ((opposite.x - node.position.x).powi(2)
+                + (opposite.y - node.position.y).powi(2))
+            .sqrt();
+            *opposite = DocumentPoint::new(
+                node.position.x - x / length * opposite_length,
+                node.position.y - y / length * opposite_length,
+            );
+        }
+    }
 }
 
 fn scale_axis(value: f32, old_start: f32, old_size: f32, new_start: f32, new_size: f32) -> f32 {

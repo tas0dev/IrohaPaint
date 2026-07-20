@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use super::coordinates::CanvasTransform;
 use super::interaction::Interaction;
+use crate::document::NodeComponent;
 use crate::document::ObjectId;
+use viewkit::platform::KeyModifiers;
 
 #[derive(Clone, Default)]
 pub struct CanvasController {
@@ -15,7 +17,9 @@ pub(crate) struct CanvasState {
     pub transform: CanvasTransform,
     pub interaction: Interaction,
     pub active_pen_path: Option<ObjectId>,
-    pub selected_node: Option<(ObjectId, usize)>,
+    pub selected_nodes: Vec<(ObjectId, usize)>,
+    pub hovered_node: Option<(ObjectId, usize, NodeComponent)>,
+    pub modifiers: KeyModifiers,
     pub space_pressed: bool,
 }
 

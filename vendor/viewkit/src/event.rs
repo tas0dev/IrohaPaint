@@ -43,6 +43,10 @@ pub enum ViewEvent {
         repeat: bool,
     },
 
+    ModifiersChanged {
+        modifiers: KeyModifiers,
+    },
+
     Backspace,
     ArrowLeft,
     ArrowRight,
@@ -77,6 +81,7 @@ impl ViewEvent {
             Self::PointerLeft
             | Self::TextInput { .. }
             | Self::KeyInput { .. }
+            | Self::ModifiersChanged { .. }
             | Self::FocusChanged { .. }
             | Self::Backspace
             | Self::Delete
@@ -108,6 +113,7 @@ impl ViewEvent {
                 | Self::PointerLeft
                 | Self::TextInput { .. }
                 | Self::KeyInput { .. }
+                | Self::ModifiersChanged { .. }
                 | Self::Backspace
                 | Self::Delete
                 | Self::Home
@@ -338,6 +344,9 @@ impl EventDispatcher {
                 state: *state,
                 modifiers: *modifiers,
                 repeat: *repeat,
+            }),
+            PlatformEvent::ModifiersChanged { modifiers } => Some(ViewEvent::ModifiersChanged {
+                modifiers: *modifiers,
             }),
             PlatformEvent::Backspace => Some(ViewEvent::Backspace),
             PlatformEvent::Delete => Some(ViewEvent::Delete),

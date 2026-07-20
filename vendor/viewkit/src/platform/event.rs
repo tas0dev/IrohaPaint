@@ -19,6 +19,7 @@ pub enum ButtonState {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KeyModifiers {
     pub shift: bool,
+    pub alt: bool,
     pub shortcut: bool,
 }
 
@@ -62,6 +63,9 @@ pub enum PlatformEvent {
         state: ButtonState,
         modifiers: KeyModifiers,
         repeat: bool,
+    },
+    ModifiersChanged {
+        modifiers: KeyModifiers,
     },
 
     Backspace,

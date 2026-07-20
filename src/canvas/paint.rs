@@ -5,8 +5,8 @@ use viewkit::prelude::{Point, Rect, SvgData};
 use viewkit::view::PaintContext;
 
 use crate::document::{
-    BezierNode, BezierPath, Document, DocumentPoint, DocumentRect, ObjectKind, StrokeCap,
-    StrokeJoin, StrokeStyle,
+    BezierNode, BezierPath, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId,
+    ObjectKind, StrokeCap, StrokeJoin, StrokeStyle,
 };
 use crate::editor::EditorTool;
 
@@ -16,12 +16,17 @@ use super::interaction::{Interaction, ResizeHandle, ShapeDraftKind, kind_bounds}
 const HANDLE_SIZE: f32 = 8.0;
 const CONTROL_HANDLE_SIZE: f32 = 6.0;
 
+pub(crate) struct NodePresentation<'a> {
+    pub selected: &'a [(ObjectId, usize)],
+    pub hovered: Option<(ObjectId, usize, NodeComponent)>,
+}
+
 pub fn paint_editor_canvas(
     document: &Document,
     transform: CanvasTransform,
     interaction: &Interaction,
     active_tool: EditorTool,
-    selected_node: Option<(crate::document::ObjectId, usize)>,
+    nodes: NodePresentation<'_>,
     bounds: Rect,
     context: &mut PaintContext<'_>,
 ) {
@@ -54,10 +59,15 @@ pub fn paint_editor_canvas(
         if matches!(active_tool, EditorTool::NodeEdit | EditorTool::Pen)
             && let ObjectKind::Path { path, .. } = &selection_kind
         {
-            let selected_index = selected_node
-                .filter(|(object_id, _)| *object_id == selected_id)
-                .map(|(_, index)| index);
-            paint_path_nodes(path, selected_index, transform, bounds, context);
+            let selected_indices = nodes
+                .selected
+                .iter()
+                .filter_map(|(object_id, index)| (*object_id == selected_id).then_some(*index))
+                .collect::<Vec<_>>();
+            let hovered = nodes.hovered.and_then(|(object_id, index, component)| {
+                (object_id == selected_id).then_some((index, component))
+            });
+            paint_path_nodes(path, &selected_indices, hovered, transform, bounds, context);
         } else if active_tool != EditorTool::Pencil {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
@@ -235,7 +245,18 @@ fn paint_draft(
             ..
         } => {
             let node = BezierNode::smooth(*position, *handle_out);
-            paint_node_controls(&node, true, transform, canvas_bounds, context);
+            paint_node_controls(&node, true, None, transform, canvas_bounds, context);
+        }
+        Interaction::SelectingNodes { start, current, .. } => {
+            let rect = transform.document_rect_to_canvas(
+                DocumentRect::from_points(*start, *current),
+                canvas_bounds,
+            );
+            context.display_list.push(DrawCommand::StrokeRect {
+                rect,
+                color: context.theme.colors.accent,
+                width: 1.0,
+            });
         }
         _ => {}
     }
@@ -243,15 +264,19 @@ fn paint_draft(
 
 fn paint_path_nodes(
     path: &BezierPath,
-    selected_node: Option<usize>,
+    selected_nodes: &[usize],
+    hovered_node: Option<(usize, NodeComponent)>,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
 ) {
-    if let Some(index) = selected_node
-        && let Some(node) = path.nodes().get(index)
-    {
-        paint_node_controls(node, true, transform, canvas_bounds, context);
+    for &index in selected_nodes {
+        if let Some(node) = path.nodes().get(index) {
+            let hovered = hovered_node
+                .filter(|(hovered_index, _)| *hovered_index == index)
+                .map(|(_, component)| component);
+            paint_node_controls(node, true, hovered, transform, canvas_bounds, context);
+        }
     }
 
     for (index, node) in path.nodes().iter().enumerate() {
@@ -260,8 +285,10 @@ fn paint_path_nodes(
         let rect = Rect::new(center.x - size / 2.0, center.y - size / 2.0, size, size);
         context.display_list.push(DrawCommand::FillRect {
             rect,
-            color: if selected_node == Some(index) {
+            color: if selected_nodes.contains(&index) {
                 context.theme.colors.accent
+            } else if hovered_node == Some((index, NodeComponent::Anchor)) {
+                context.theme.colors.accent_hovered
             } else {
                 context.theme.colors.elevated_surface
             },
@@ -277,6 +304,7 @@ fn paint_path_nodes(
 fn paint_node_controls(
     node: &BezierNode,
     selected: bool,
+    hovered: Option<NodeComponent>,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -323,7 +351,13 @@ fn paint_node_controls(
         context,
     );
 
-    for handle in visible_handles {
+    for (component, handle) in [
+        (NodeComponent::HandleIn, node.handle_in),
+        (NodeComponent::HandleOut, node.handle_out),
+    ] {
+        if !visible_handles.contains(&handle) {
+            continue;
+        }
         let center = transform.document_to_canvas(handle, canvas_bounds);
         let rect = Rect::new(
             center.x - CONTROL_HANDLE_SIZE / 2.0,
@@ -333,7 +367,9 @@ fn paint_node_controls(
         );
         context.display_list.push(DrawCommand::FillEllipse {
             rect,
-            color: if selected {
+            color: if hovered == Some(component) {
+                context.theme.colors.accent_hovered
+            } else if selected {
                 context.theme.colors.elevated_surface
             } else {
                 context.theme.colors.surface
