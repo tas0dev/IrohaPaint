@@ -3,7 +3,7 @@ use viewkit::prelude::Point;
 use crate::brush::BrushDefinition;
 use crate::document::{
     BezierNode, BezierPath, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind,
-    ObjectStyle,
+    ObjectStyle, PaintDab,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +63,12 @@ pub enum Interaction {
         raw_points: Vec<DocumentPoint>,
         preview: Option<BezierPath>,
         brush: BrushDefinition,
+    },
+    Painting {
+        last_input: Option<DocumentPoint>,
+        distance_since_dab: f32,
+        spacing: f32,
+        dab: PaintDab,
     },
     DrawingBlob {
         raw_points: Vec<DocumentPoint>,

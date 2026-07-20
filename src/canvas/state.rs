@@ -4,8 +4,7 @@ use std::rc::Rc;
 use super::coordinates::CanvasTransform;
 use super::hit_test::SegmentHit;
 use super::interaction::Interaction;
-use crate::document::NodeComponent;
-use crate::document::ObjectId;
+use crate::document::{DocumentRect, NodeComponent, ObjectId};
 use viewkit::platform::KeyModifiers;
 
 #[derive(Clone, Default)]
@@ -24,6 +23,7 @@ pub(crate) struct CanvasState {
     pub hovered_segment: Option<(ObjectId, SegmentHit)>,
     pub modifiers: KeyModifiers,
     pub space_pressed: bool,
+    pub paint_dirty: Option<DocumentRect>,
 }
 
 impl CanvasController {

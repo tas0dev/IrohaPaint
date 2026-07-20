@@ -1,6 +1,8 @@
+mod paint_layer;
 mod path_edit;
 mod stroke_outline;
 
+pub(crate) use paint_layer::{PAINT_TILE_SIZE, PaintDab, PaintLayer};
 use path_edit::simplification_candidates;
 pub(crate) use stroke_outline::variable_stroke_outlines;
 
@@ -393,6 +395,7 @@ impl DocumentObject {
 pub struct Layer {
     name: String,
     objects: Vec<DocumentObject>,
+    paint: PaintLayer,
 }
 
 impl Layer {
@@ -400,6 +403,7 @@ impl Layer {
         Self {
             name: name.into(),
             objects: Vec::new(),
+            paint: PaintLayer::default(),
         }
     }
 
@@ -409,6 +413,10 @@ impl Layer {
 
     pub fn objects(&self) -> &[DocumentObject] {
         &self.objects
+    }
+
+    pub fn paint(&self) -> &PaintLayer {
+        &self.paint
     }
 }
 
@@ -493,6 +501,28 @@ impl Document {
 
     pub fn select_object(&mut self, id: Option<ObjectId>) {
         self.selected_object = id.filter(|id| self.object(*id).is_some());
+    }
+
+    pub fn begin_paint_stroke(&mut self, dabs: &[PaintDab]) {
+        if dabs.is_empty() {
+            return;
+        }
+        self.record_change();
+        self.selected_object = None;
+        self.apply_paint_dabs(dabs);
+    }
+
+    pub fn continue_paint_stroke(&mut self, dabs: &[PaintDab]) {
+        if !dabs.is_empty() {
+            self.apply_paint_dabs(dabs);
+        }
+    }
+
+    pub fn cancel_paint_stroke(&mut self) {
+        if let Some(snapshot) = self.undo_stack.pop() {
+            self.restore(snapshot);
+            self.redo_stack.clear();
+        }
     }
 
     pub fn object(&self, id: ObjectId) -> Option<&DocumentObject> {
@@ -794,6 +824,20 @@ impl Document {
         self.layers[layer_index].objects.push(object);
         self.selected_object = Some(id);
         id
+    }
+
+    fn apply_paint_dabs(&mut self, dabs: &[PaintDab]) {
+        let layer_index = self.selected_layer.unwrap_or(0);
+        let clip = match self.properties.canvas_size {
+            CanvasSize::FitArtwork => None,
+            CanvasSize::Custom { width, height } => Some(DocumentRect {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            }),
+        };
+        self.layers[layer_index].paint.apply_dabs(dabs, clip);
     }
 
     fn edit_object(&mut self, id: ObjectId, edit: impl FnOnce(&mut DocumentObject)) {

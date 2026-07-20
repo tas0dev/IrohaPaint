@@ -11,6 +11,9 @@ pub struct InspectorBindings {
     pub color_target: State<usize>,
     pub brush_width: State<f32>,
     pub blob_width: State<f32>,
+    pub paint_size: State<f32>,
+    pub paint_opacity: State<f32>,
+    pub paint_softness: State<f32>,
     pub smoothing: State<f32>,
     pub inspected_object: State<Option<ObjectId>>,
 }
@@ -25,6 +28,7 @@ pub fn view(
     let current_document = document.get();
     let tool = active_tool.get();
     let painting_blob = tool == EditorTool::BlobBrush;
+    let painting_raster = tool == EditorTool::Paint;
     let selected_object = if edits_selection(tool) {
         current_document.selected_object()
     } else {
@@ -60,7 +64,7 @@ pub fn view(
                 })
         })
         .collect::<Vec<_>>();
-    let editing_fill = !painting_blob && bindings.color_target.get() == 1;
+    let editing_fill = !painting_blob && !painting_raster && bindings.color_target.get() == 1;
     let selected_color = if editing_fill {
         bindings.fill_color.get()
     } else {
@@ -73,10 +77,17 @@ pub fn view(
         .child(Text::new("Layers").weight(700))
         .child(Divider::new())
         .children(layer_rows)
-        .child(Text::new(if painting_blob { "Paint" } else { "Appearance" }).weight(700))
+        .child(
+            Text::new(if painting_blob || painting_raster {
+                "Paint"
+            } else {
+                "Appearance"
+            })
+            .weight(700),
+        )
         .child(Divider::new());
 
-    if !painting_blob {
+    if !painting_blob && !painting_raster {
         content = content.child(
             SegmentedControl::new(bindings.color_target.binding())
                 .item(0, "Stroke")
@@ -132,6 +143,8 @@ pub fn view(
                 "Size — {:.1} px",
                 if painting_blob {
                     bindings.blob_width.get()
+                } else if painting_raster {
+                    bindings.paint_size.get()
                 } else {
                     bindings.brush_width.get()
                 }
@@ -139,6 +152,10 @@ pub fn view(
             .child(if painting_blob {
                 Slider::new(bindings.blob_width.binding())
                     .range(1.0..=200.0)
+                    .step(1.0)
+            } else if painting_raster {
+                Slider::new(bindings.paint_size.binding())
+                    .range(1.0..=256.0)
                     .step(1.0)
             } else {
                 Slider::new(bindings.brush_width.binding())
@@ -160,6 +177,28 @@ pub fn view(
                     })
             })
     };
+
+    if painting_raster {
+        content = content
+            .child(Text::new(format!(
+                "Opacity — {:.0}%",
+                bindings.paint_opacity.get() * 100.0
+            )))
+            .child(
+                Slider::new(bindings.paint_opacity.binding())
+                    .range(0.01..=1.0)
+                    .step(0.01),
+            )
+            .child(Text::new(format!(
+                "Softness — {:.0}%",
+                bindings.paint_softness.get() * 100.0
+            )))
+            .child(
+                Slider::new(bindings.paint_softness.binding())
+                    .range(0.0..=1.0)
+                    .step(0.05),
+            );
+    }
 
     if matches!(tool, EditorTool::Pencil | EditorTool::BlobBrush) {
         content = content

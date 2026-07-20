@@ -28,6 +28,7 @@ my @icons = (
 	'file-input',
 	'file-output',
 	'brush',
+	'droplet',
 );
 
 make_path($output_dir);

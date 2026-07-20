@@ -6,7 +6,7 @@ use viewkit::view::{Constraints, MeasureContext, PaintContext};
 use crate::brush::BrushLibrary;
 use crate::document::{
     BezierNode, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, NodeComponent,
-    ObjectKind, ObjectStyle,
+    ObjectKind, ObjectStyle, PaintDab,
 };
 use crate::editor::EditorTool;
 
@@ -15,6 +15,7 @@ use super::hit_test::{
 };
 use super::interaction::{Interaction, ShapeDraftKind};
 use super::paint::{NodePresentation, paint_editor_canvas};
+use super::raster_stroke::interpolate_dabs;
 use super::state::CanvasController;
 use super::stroke::{fit_blob_stroke, fit_pencil_stroke};
 
@@ -26,8 +27,15 @@ pub struct EditorCanvas {
     active_tool: State<EditorTool>,
     controller: CanvasController,
     brushes: State<BrushLibrary>,
-    fill_color: State<Color>,
-    blob_width: State<f32>,
+    bindings: CanvasBindings,
+}
+
+pub struct CanvasBindings {
+    pub fill_color: State<Color>,
+    pub blob_width: State<f32>,
+    pub paint_size: State<f32>,
+    pub paint_opacity: State<f32>,
+    pub paint_softness: State<f32>,
 }
 
 impl EditorCanvas {
@@ -36,16 +44,14 @@ impl EditorCanvas {
         active_tool: State<EditorTool>,
         controller: CanvasController,
         brushes: State<BrushLibrary>,
-        fill_color: State<Color>,
-        blob_width: State<f32>,
+        bindings: CanvasBindings,
     ) -> Self {
         Self {
             document,
             active_tool,
             controller,
             brushes,
-            fill_color,
-            blob_width,
+            bindings,
         }
     }
 
@@ -237,12 +243,35 @@ impl EditorCanvas {
                     brush,
                 };
             }
+            EditorTool::Paint => {
+                if !inside_drawing_bounds {
+                    return;
+                }
+                let size = self.bindings.paint_size.get().max(1.0);
+                let dab = PaintDab {
+                    center: document_point,
+                    radius: size / 2.0,
+                    color: self.brushes.get().active().color,
+                    opacity: self.bindings.paint_opacity.get().clamp(0.0, 1.0),
+                    softness: self.bindings.paint_softness.get().clamp(0.0, 1.0),
+                };
+                self.document
+                    .update(|document| document.begin_paint_stroke(&[dab]));
+                let mut state = self.controller.get_mut();
+                state.paint_dirty = Some(dab.bounds());
+                state.interaction = Interaction::Painting {
+                    last_input: Some(document_point),
+                    distance_since_dab: 0.0,
+                    spacing: (size * 0.12).max(0.75 / transform.zoom().max(0.01)),
+                    dab,
+                };
+            }
             EditorTool::BlobBrush => {
                 if !inside_drawing_bounds {
                     return;
                 }
                 let brush = self.brushes.get().active().clone();
-                let width = self.blob_width.get();
+                let width = self.bindings.blob_width.get();
                 let style = blob_style(brush.color);
                 self.controller.get_mut().interaction = Interaction::DrawingBlob {
                     raw_points: vec![document_point],
@@ -365,6 +394,41 @@ impl EditorCanvas {
                     *preview =
                         fit_pencil_stroke(raw_points, brush.fitting_tolerance(transform.zoom()));
                 }
+                true
+            }
+            Interaction::Painting {
+                last_input,
+                distance_since_dab,
+                spacing,
+                dab,
+            } => {
+                if !inside_drawing_bounds {
+                    *last_input = None;
+                    *distance_since_dab = 0.0;
+                    return false;
+                }
+                let Some(previous) = *last_input else {
+                    let resumed_dab = PaintDab {
+                        center: document_point,
+                        ..*dab
+                    };
+                    *last_input = Some(document_point);
+                    state.paint_dirty = Some(resumed_dab.bounds());
+                    drop(state);
+                    self.document
+                        .update(|document| document.continue_paint_stroke(&[resumed_dab]));
+                    return true;
+                };
+                let dabs =
+                    interpolate_dabs(previous, document_point, distance_since_dab, *spacing, *dab);
+                *last_input = Some(document_point);
+                if dabs.is_empty() {
+                    return false;
+                }
+                state.paint_dirty = paint_dab_bounds(&dabs);
+                drop(state);
+                self.document
+                    .update(|document| document.continue_paint_stroke(&dabs));
                 true
             }
             Interaction::DrawingBlob {
@@ -602,7 +666,7 @@ impl EditorCanvas {
     fn active_object_style(&self) -> ObjectStyle {
         ObjectStyle {
             stroke: self.brushes.get().active().stroke_style(),
-            fill: document_color(self.fill_color.get()),
+            fill: document_color(self.bindings.fill_color.get()),
         }
     }
 
@@ -683,6 +747,23 @@ impl EditorCanvas {
         };
         context.set_cursor(cursor);
     }
+
+    fn take_redraw_bounds(&self, canvas_bounds: Rect) -> Rect {
+        let mut state = self.controller.get_mut();
+        let Some(mut dirty) = state.paint_dirty.take() else {
+            return canvas_bounds;
+        };
+        let margin = 2.0 / state.transform.zoom().max(0.01);
+        dirty.x -= margin;
+        dirty.y -= margin;
+        dirty.width += margin * 2.0;
+        dirty.height += margin * 2.0;
+        state
+            .transform
+            .document_rect_to_canvas(dirty, canvas_bounds)
+            .intersection(canvas_bounds)
+            .unwrap_or_default()
+    }
 }
 
 impl View for EditorCanvas {
@@ -730,7 +811,7 @@ impl View for EditorCanvas {
                 if bounds.contains(*position) && *button == PointerButton::Primary =>
             {
                 self.handle_primary_press(*position, bounds);
-                context.request_redraw_in(bounds);
+                context.request_redraw_in(self.take_redraw_bounds(bounds));
                 self.update_cursor(context);
                 EventResult::Consumed
             }
@@ -754,7 +835,7 @@ impl View for EditorCanvas {
                 EventResult::Consumed
             }
             ViewEvent::PointerMoved { position } if self.handle_pointer_move(*position, bounds) => {
-                context.request_redraw_in(bounds);
+                context.request_redraw_in(self.take_redraw_bounds(bounds));
                 self.update_cursor(context);
                 EventResult::Consumed
             }
@@ -810,27 +891,45 @@ impl View for EditorCanvas {
             } => match (key, state) {
                 (KeyCode::Escape, ButtonState::Pressed) => {
                     let mut state = self.controller.get_mut();
+                    let cancel_paint = matches!(state.interaction, Interaction::Painting { .. });
                     state.interaction = Interaction::Idle;
                     state.active_pen_path = None;
                     drop(state);
+                    if cancel_paint {
+                        self.document.update(Document::cancel_paint_stroke);
+                    }
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
                 }
                 (KeyCode::Space, key_state) => {
                     let mut state = self.controller.get_mut();
                     state.space_pressed = *key_state == ButtonState::Pressed;
+                    let cancel_paint = *key_state == ButtonState::Pressed
+                        && matches!(state.interaction, Interaction::Painting { .. });
                     if *key_state == ButtonState::Pressed
                         && matches!(
                             state.interaction,
-                            Interaction::DrawingPencil { .. } | Interaction::DrawingBlob { .. }
+                            Interaction::DrawingPencil { .. }
+                                | Interaction::DrawingBlob { .. }
+                                | Interaction::Painting { .. }
                         )
                     {
                         state.interaction = Interaction::Idle;
                     }
+                    drop(state);
+                    if cancel_paint {
+                        self.document.update(Document::cancel_paint_stroke);
+                    }
                     EventResult::Consumed
                 }
                 (KeyCode::Z, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
-                    if modifiers.shift {
+                    let painting = matches!(
+                        self.controller.get().interaction,
+                        Interaction::Painting { .. }
+                    );
+                    if painting {
+                        self.document.update(Document::cancel_paint_stroke);
+                    } else if modifiers.shift {
                         self.document.update(Document::redo);
                     } else {
                         self.document.update(Document::undo);
@@ -840,16 +939,30 @@ impl View for EditorCanvas {
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
+                    if painting {
+                        canvas.interaction = Interaction::Idle;
+                    }
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
                 }
                 (KeyCode::Y, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
-                    self.document.update(Document::redo);
+                    let painting = matches!(
+                        self.controller.get().interaction,
+                        Interaction::Painting { .. }
+                    );
+                    if painting {
+                        self.document.update(Document::cancel_paint_stroke);
+                    } else {
+                        self.document.update(Document::redo);
+                    }
                     let mut canvas = self.controller.get_mut();
                     canvas.selected_nodes.clear();
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
                     canvas.active_pen_path = None;
+                    if painting {
+                        canvas.interaction = Interaction::Idle;
+                    }
                     context.request_redraw_in(bounds);
                     EventResult::Consumed
                 }
@@ -870,7 +983,10 @@ impl View for EditorCanvas {
                 let mut state = self.controller.get_mut();
                 state.space_pressed = false;
                 state.modifiers = KeyModifiers::default();
-                if matches!(state.interaction, Interaction::Panning { .. }) {
+                if matches!(
+                    state.interaction,
+                    Interaction::Panning { .. } | Interaction::Painting { .. }
+                ) {
                     state.interaction = Interaction::Idle;
                 }
                 EventResult::Ignored
@@ -889,6 +1005,21 @@ fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {
 
 fn document_color(color: Color) -> DocumentColor {
     DocumentColor::rgba(color.red, color.green, color.blue, color.alpha)
+}
+
+fn paint_dab_bounds(dabs: &[PaintDab]) -> Option<DocumentRect> {
+    dabs.iter().map(|dab| dab.bounds()).reduce(|first, second| {
+        let x = first.x.min(second.x);
+        let y = first.y.min(second.y);
+        let right = (first.x + first.width).max(second.x + second.width);
+        let bottom = (first.y + first.height).max(second.y + second.height);
+        DocumentRect {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        }
+    })
 }
 
 fn blob_style(color: DocumentColor) -> ObjectStyle {

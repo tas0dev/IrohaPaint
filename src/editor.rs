@@ -3,6 +3,7 @@ pub enum EditorTool {
     Select,
     NodeEdit,
     Pencil,
+    Paint,
     BlobBrush,
     Pen,
     Rectangle,
@@ -10,10 +11,11 @@ pub enum EditorTool {
 }
 
 impl EditorTool {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Select,
         Self::NodeEdit,
         Self::Pencil,
+        Self::Paint,
         Self::BlobBrush,
         Self::Pen,
         Self::Rectangle,

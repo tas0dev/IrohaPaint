@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use crate::document::{
     BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, ObjectKind,
-    StrokeCap, StrokeJoin, StrokeStyle, variable_stroke_outlines,
+    PAINT_TILE_SIZE, PaintLayer, StrokeCap, StrokeJoin, StrokeStyle, variable_stroke_outlines,
 };
 
 use super::ExportError;
@@ -44,6 +44,7 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
     );
     for layer in document.layers() {
         source.push_str("<g>");
+        write_paint_layer(&mut source, layer.paint())?;
         for object in layer.objects() {
             write_object(&mut source, object.kind());
         }
@@ -55,6 +56,59 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
         width: bounds.width,
         height: bounds.height,
     })
+}
+
+fn write_paint_layer(source: &mut String, layer: &PaintLayer) -> Result<(), ExportError> {
+    for tile in layer.tiles() {
+        let mut pixels = tile.pixels().to_vec();
+        for pixel in pixels.chunks_exact_mut(4) {
+            let alpha = u16::from(pixel[3]);
+            pixel[0] = ((u16::from(pixel[0]) * alpha + 127) / 255) as u8;
+            pixel[1] = ((u16::from(pixel[1]) * alpha + 127) / 255) as u8;
+            pixel[2] = ((u16::from(pixel[2]) * alpha + 127) / 255) as u8;
+        }
+        let size = tiny_skia::IntSize::from_wh(PAINT_TILE_SIZE, PAINT_TILE_SIZE)
+            .ok_or(ExportError::InvalidDimensions)?;
+        let pixmap =
+            tiny_skia::Pixmap::from_vec(pixels, size).ok_or(ExportError::InvalidDimensions)?;
+        let png = pixmap
+            .encode_png()
+            .map_err(|error| ExportError::Png(error.to_string()))?;
+        let bounds = tile.document_bounds();
+        let _ = write!(
+            source,
+            r#"<image x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" href="data:image/png;base64,{data}"/>"#,
+            x = bounds.x,
+            y = bounds.y,
+            width = bounds.width,
+            height = bounds.height,
+            data = base64(&png),
+        );
+    }
+    Ok(())
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or_default();
+        let third = chunk.get(2).copied().unwrap_or_default();
+        encoded.push(ALPHABET[(first >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
+        encoded.push(if chunk.len() > 1 {
+            ALPHABET[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        encoded.push(if chunk.len() > 2 {
+            ALPHABET[(third & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    encoded
 }
 
 fn write_object(source: &mut String, kind: &ObjectKind) {
@@ -185,12 +239,18 @@ fn write_curve(
 }
 
 fn artwork_bounds(document: &Document) -> Option<DocumentRect> {
-    document
-        .layers()
-        .iter()
-        .flat_map(|layer| layer.objects())
-        .filter_map(|object| object_bounds(object.kind()))
-        .reduce(union)
+    let mut bounds = None;
+    for layer in document.layers() {
+        if let Some(paint_bounds) = layer.paint().bounds() {
+            bounds = Some(bounds.map_or(paint_bounds, |bounds| union(bounds, paint_bounds)));
+        }
+        for object in layer.objects() {
+            if let Some(object_bounds) = object_bounds(object.kind()) {
+                bounds = Some(bounds.map_or(object_bounds, |bounds| union(bounds, object_bounds)));
+            }
+        }
+    }
+    bounds
 }
 
 fn object_bounds(kind: &ObjectKind) -> Option<DocumentRect> {

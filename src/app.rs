@@ -1,7 +1,7 @@
 use viewkit::prelude::*;
 
 use crate::brush::BrushLibrary;
-use crate::canvas::{CanvasController, EditorCanvas};
+use crate::canvas::{CanvasBindings, CanvasController, EditorCanvas};
 use crate::document::{Document, ObjectId};
 use crate::editor::EditorTool;
 use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
@@ -26,6 +26,9 @@ pub struct IrohaPaint {
     color_target: State<usize>,
     brush_width: State<f32>,
     blob_width: State<f32>,
+    paint_size: State<f32>,
+    paint_opacity: State<f32>,
+    paint_softness: State<f32>,
     smoothing: State<f32>,
     inspected_object: State<Option<ObjectId>>,
 }
@@ -54,6 +57,9 @@ impl App for IrohaPaint {
             color_target: State::new(0),
             brush_width: State::new(2.5),
             blob_width: State::new(40.0),
+            paint_size: State::new(48.0),
+            paint_opacity: State::new(0.8),
+            paint_softness: State::new(0.2),
             smoothing: State::new(0.72),
             inspected_object: State::new(None),
         }
@@ -90,8 +96,13 @@ impl App for IrohaPaint {
                             self.active_tool.clone(),
                             self.canvas.clone(),
                             self.brushes.clone(),
-                            self.fill_color.clone(),
-                            self.blob_width.clone(),
+                            CanvasBindings {
+                                fill_color: self.fill_color.clone(),
+                                blob_width: self.blob_width.clone(),
+                                paint_size: self.paint_size.clone(),
+                                paint_opacity: self.paint_opacity.clone(),
+                                paint_softness: self.paint_softness.clone(),
+                            },
                         )
                         .layout()
                         .flex_grow(1.0),
@@ -108,6 +119,9 @@ impl App for IrohaPaint {
                             color_target: self.color_target.clone(),
                             brush_width: self.brush_width.clone(),
                             blob_width: self.blob_width.clone(),
+                            paint_size: self.paint_size.clone(),
+                            paint_opacity: self.paint_opacity.clone(),
+                            paint_softness: self.paint_softness.clone(),
                             smoothing: self.smoothing.clone(),
                             inspected_object: self.inspected_object.clone(),
                         },

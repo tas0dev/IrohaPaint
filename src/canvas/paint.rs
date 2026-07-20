@@ -1,13 +1,13 @@
 use std::fmt::Write;
 
-use viewkit::draw_command::{DrawCommand, SvgCommand};
-use viewkit::prelude::{Point, Rect, SvgData};
+use viewkit::draw_command::{DrawCommand, ImageCommand, ImageSampling, SvgCommand};
+use viewkit::prelude::{ImageData, Point, Rect, SvgData};
 use viewkit::view::PaintContext;
 
 use crate::document::{
     BezierNode, BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect,
-    NodeComponent, ObjectId, ObjectKind, ObjectStyle, StrokeCap, StrokeJoin, StrokeStyle,
-    variable_stroke_outlines,
+    NodeComponent, ObjectId, ObjectKind, ObjectStyle, PaintLayer, StrokeCap, StrokeJoin,
+    StrokeStyle, variable_stroke_outlines,
 };
 use crate::editor::EditorTool;
 
@@ -72,6 +72,7 @@ pub fn paint_editor_canvas(
     }
 
     for layer in document.layers() {
+        paint_raster_layer(layer.paint(), transform, bounds, context);
         for object in layer.objects() {
             if let Some(preview) = interaction.preview_kind(object.id()) {
                 paint_kind(&preview, transform, bounds, context);
@@ -122,12 +123,40 @@ pub fn paint_editor_canvas(
             {
                 paint_segment_insertion(hit.point, transform, bounds, context);
             }
-        } else if !matches!(active_tool, EditorTool::Pencil | EditorTool::BlobBrush) {
+        } else if !matches!(
+            active_tool,
+            EditorTool::Pencil | EditorTool::Paint | EditorTool::BlobBrush
+        ) {
             paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
         }
     }
 
     context.display_list.push(DrawCommand::PopClip);
+}
+
+fn paint_raster_layer(
+    layer: &PaintLayer,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    context: &mut PaintContext<'_>,
+) {
+    for tile in layer.tiles() {
+        let Ok(image) = ImageData::from_rgba8(
+            crate::document::PAINT_TILE_SIZE,
+            crate::document::PAINT_TILE_SIZE,
+            tile.pixels().to_vec(),
+        ) else {
+            continue;
+        };
+        context.display_list.push(DrawCommand::DrawImage {
+            command: ImageCommand {
+                image,
+                bounds: transform.document_rect_to_canvas(tile.document_bounds(), canvas_bounds),
+                opacity: 1.0,
+                sampling: ImageSampling::Bilinear,
+            },
+        });
+    }
 }
 
 fn paint_kind(
