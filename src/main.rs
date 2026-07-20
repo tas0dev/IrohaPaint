@@ -1,6 +1,16 @@
 use viewkit::prelude::*;
 
-struct IrohaPaint;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditorTool {
+    Select,
+    Pen,
+    Rectangle,
+    Ellipse,
+}
+
+struct IrohaPaint {
+    active_tool: State<EditorTool>,
+}
 
 impl IrohaPaint {
     fn menu_bar(&self) -> impl View + 'static {
@@ -24,25 +34,55 @@ impl IrohaPaint {
     }
 
     fn tool_bar(&self) -> impl View + 'static {
+        let active_tool = self.active_tool.get();
+
         Padding::all(8.0).content(
             VStack::new()
                 .alignment(StackAlignment::Stretch)
-                .gap(StackGap::Small)
+                .gap(StackGap::ExtraSmall)
                 .child(
-                    Button::new("Select")
-                        .style(ButtonStyle::Accent),
+                    ListRow::new("Select")
+                        .selected(active_tool == EditorTool::Select)
+                        .on_select({
+                            let active_tool = self.active_tool.clone();
+
+                            move || {
+                                active_tool.set(EditorTool::Select);
+                            }
+                        }),
                 )
                 .child(
-                    Button::new("Pen")
-                        .style(ButtonStyle::Ghost),
+                    ListRow::new("Pen")
+                        .selected(active_tool == EditorTool::Pen)
+                        .on_select({
+                            let active_tool = self.active_tool.clone();
+
+                            move || {
+                                active_tool.set(EditorTool::Pen);
+                            }
+                        }),
                 )
                 .child(
-                    Button::new("Rect")
-                        .style(ButtonStyle::Ghost),
+                    ListRow::new("Rectangle")
+                        .selected(active_tool == EditorTool::Rectangle)
+                        .on_select({
+                            let active_tool = self.active_tool.clone();
+
+                            move || {
+                                active_tool.set(EditorTool::Rectangle);
+                            }
+                        }),
                 )
                 .child(
-                    Button::new("Ellipse")
-                        .style(ButtonStyle::Ghost),
+                    ListRow::new("Ellipse")
+                        .selected(active_tool == EditorTool::Ellipse)
+                        .on_select({
+                            let active_tool = self.active_tool.clone();
+
+                            move || {
+                                active_tool.set(EditorTool::Ellipse);
+                            }
+                        }),
                 ),
         )
     }
@@ -84,7 +124,9 @@ impl App for IrohaPaint {
     type Body = Box<dyn View + 'static>;
 
     fn new() -> Self {
-        Self
+        Self {
+            active_tool: State::new(EditorTool::Select),
+        }
     }
 
     fn window(&self) -> WindowOptions {
