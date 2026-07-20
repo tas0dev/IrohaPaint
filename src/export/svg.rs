@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use crate::document::{
     BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, ObjectKind,
-    StrokeCap, StrokeJoin,
+    StrokeCap, StrokeJoin, StrokeStyle, variable_stroke_outlines,
 };
 
 use super::ExportError;
@@ -89,8 +89,16 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
                 style.stroke.width.max(0.0),
             );
         }
-        ObjectKind::Path { path, style } => {
+        ObjectKind::Path {
+            path,
+            style,
+            variable_width,
+        } => {
             if path.nodes().len() < 2 {
+                return;
+            }
+            if *variable_width {
+                write_variable_stroke(source, path, style.stroke);
                 return;
             }
             let mut commands = String::new();
@@ -112,6 +120,23 @@ fn write_object(source: &mut String, kind: &ObjectKind) {
             );
         }
     }
+}
+
+fn write_variable_stroke(source: &mut String, path: &BezierPath, stroke: StrokeStyle) {
+    let outlines = variable_stroke_outlines(path, stroke);
+    if outlines.is_empty() {
+        return;
+    }
+    let mut commands = String::new();
+    for outline in &outlines {
+        write_path_commands(&mut commands, outline);
+    }
+    let _ = write!(
+        source,
+        r##"<path d="{commands}" fill="{color}" fill-opacity="{opacity:.3}" fill-rule="evenodd" stroke="none"/>"##,
+        color = color_hex(stroke.color),
+        opacity = stroke.color.alpha as f32 / 255.0,
+    );
 }
 
 fn color_hex(color: DocumentColor) -> String {
@@ -173,8 +198,20 @@ fn object_bounds(kind: &ObjectKind) -> Option<DocumentRect> {
         ObjectKind::Rectangle { bounds, style } | ObjectKind::Ellipse { bounds, style } => {
             Some(expand(*bounds, style.stroke.width.max(0.0) / 2.0))
         }
-        ObjectKind::Path { path, style } => {
-            path_curve_bounds(path).map(|bounds| expand(bounds, style.stroke.width.max(0.0) / 2.0))
+        ObjectKind::Path {
+            path,
+            style,
+            variable_width,
+        } => {
+            if *variable_width {
+                variable_stroke_outlines(path, style.stroke)
+                    .iter()
+                    .filter_map(path_curve_bounds)
+                    .reduce(union)
+            } else {
+                path_curve_bounds(path)
+                    .map(|bounds| expand(bounds, style.stroke.width.max(0.0) / 2.0))
+            }
         }
     }
 }

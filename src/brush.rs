@@ -59,8 +59,19 @@ pub struct BrushDefinition {
 
 impl BrushDefinition {
     pub fn stroke_style(&self) -> StrokeStyle {
+        let (tip_roundness, tip_angle) = match self.tip {
+            BrushTip::Round => (1.0, 0.0),
+            BrushTip::Ellipse { roundness, angle } => {
+                (roundness.clamp(0.05, 1.0), angle.to_radians())
+            }
+        };
         StrokeStyle {
             width: self.width.max(0.1),
+            minimum_width: self.minimum_width.clamp(0.01, 1.0),
+            taper_start: self.taper_start.clamp(0.0, 1.0),
+            taper_end: self.taper_end.clamp(0.0, 1.0),
+            tip_roundness,
+            tip_angle,
             cap: self.cap,
             join: self.join,
             color: self.color,
@@ -205,7 +216,7 @@ fn parse_brush(path: &Path, source: &str) -> Result<BrushDefinition, BrushFileEr
                 message: format!("Invalid {key}"),
             })
     };
-    if required("version")? != "1" {
+    if required("version")? != "2" {
         return Err(BrushFileError::Invalid {
             path: path.to_owned(),
             message: String::from("Unsupported version"),
@@ -266,7 +277,7 @@ fn serialize_brush(brush: &BrushDefinition) -> String {
         BrushTip::Ellipse { roundness, angle } => ("ellipse", roundness, angle),
     };
     format!(
-        "version=1\nname={}\ntip={}\ntip_roundness={}\ntip_angle={}\nwidth={}\nminimum_width={}\nsmoothing={}\nstreamline={}\ntaper_start={}\ntaper_end={}\ncolor={}\ncap={}\njoin={}\n",
+        "version=2\nname={}\ntip={}\ntip_roundness={}\ntip_angle={}\nwidth={}\nminimum_width={}\nsmoothing={}\nstreamline={}\ntaper_start={}\ntaper_end={}\ncolor={}\ncap={}\njoin={}\n",
         brush.name.replace(['\r', '\n'], " "),
         tip,
         roundness,

@@ -7,6 +7,7 @@ use viewkit::view::PaintContext;
 use crate::document::{
     BezierNode, BezierPath, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect,
     NodeComponent, ObjectId, ObjectKind, ObjectStyle, StrokeCap, StrokeJoin, StrokeStyle,
+    variable_stroke_outlines,
 };
 use crate::editor::EditorTool;
 
@@ -164,9 +165,104 @@ fn paint_kind(
                 width: style.stroke.width * transform.zoom(),
             });
         }
-        ObjectKind::Path { path, style } => {
-            paint_svg_path(path, *style, transform, canvas_bounds, context);
+        ObjectKind::Path {
+            path,
+            style,
+            variable_width,
+        } => {
+            if *variable_width {
+                paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
+            } else {
+                paint_svg_path(path, *style, transform, canvas_bounds, context);
+            }
         }
+    }
+}
+
+fn paint_variable_stroke(
+    path: &BezierPath,
+    stroke: StrokeStyle,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    context: &mut PaintContext<'_>,
+) {
+    let outlines = variable_stroke_outlines(path, stroke);
+    if outlines.is_empty() || canvas_bounds.is_empty() {
+        return;
+    }
+    let svg_bounds = path_canvas_bounds(
+        path,
+        transform,
+        canvas_bounds,
+        stroke.width * transform.zoom() / 2.0 + 3.0,
+    );
+    let mut commands = String::new();
+    for outline in &outlines {
+        write_path_commands(&mut commands, outline, transform, canvas_bounds, svg_bounds);
+    }
+    let color = format!(
+        "#{:02X}{:02X}{:02X}",
+        stroke.color.red, stroke.color.green, stroke.color.blue
+    );
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><path d="{commands}" fill="{color}" fill-opacity="{opacity}" fill-rule="evenodd" stroke="none"/></svg>"##,
+        width = svg_bounds.size.width.max(1.0),
+        height = svg_bounds.size.height.max(1.0),
+        opacity = stroke.color.alpha as f32 / 255.0,
+    );
+    let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
+        return;
+    };
+    context.display_list.push(DrawCommand::DrawSvg {
+        command: SvgCommand {
+            svg,
+            bounds: svg_bounds,
+            opacity: 1.0,
+            tint: None,
+        },
+    });
+}
+
+fn write_path_commands(
+    commands: &mut String,
+    path: &BezierPath,
+    transform: CanvasTransform,
+    canvas_bounds: Rect,
+    svg_bounds: Rect,
+) {
+    let Some(first) = path.nodes().first() else {
+        return;
+    };
+    write_move(
+        commands,
+        first.position,
+        transform,
+        canvas_bounds,
+        svg_bounds,
+    );
+    for segment in path.nodes().windows(2) {
+        write_curve(
+            commands,
+            segment[0].handle_out,
+            segment[1].handle_in,
+            segment[1].position,
+            transform,
+            canvas_bounds,
+            svg_bounds,
+        );
+    }
+    if path.is_closed() {
+        let last = path.nodes().last().expect("a closed path has nodes");
+        write_curve(
+            commands,
+            last.handle_out,
+            first.handle_in,
+            first.position,
+            transform,
+            canvas_bounds,
+            svg_bounds,
+        );
+        commands.push('Z');
     }
 }
 
@@ -323,12 +419,9 @@ fn paint_draft(
             brush,
             ..
         } => {
-            paint_svg_path(
+            paint_variable_stroke(
                 path,
-                ObjectStyle {
-                    stroke: brush.stroke_style(),
-                    ..ObjectStyle::default()
-                },
+                brush.stroke_style(),
                 transform,
                 canvas_bounds,
                 context,

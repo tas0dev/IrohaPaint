@@ -227,10 +227,14 @@ impl EditorCanvas {
                 if !inside_drawing_bounds {
                     return;
                 }
+                let brush = self.brushes.get().active().clone();
                 self.controller.get_mut().interaction = Interaction::DrawingPencil {
                     raw_points: vec![document_point],
-                    preview: None,
-                    brush: self.brushes.get().active().clone(),
+                    preview: fit_pencil_stroke(
+                        &[document_point],
+                        brush.fitting_tolerance(transform.zoom()),
+                    ),
+                    brush,
                 };
             }
             EditorTool::BlobBrush => {
@@ -431,8 +435,9 @@ impl EditorCanvas {
                 brush,
                 ..
             } => {
-                self.document
-                    .update(|document| document.add_fitted_path(path, brush.stroke_style()));
+                self.document.update(|document| {
+                    document.add_variable_width_path(path, brush.stroke_style())
+                });
                 let mut state = self.controller.get_mut();
                 state.selected_nodes.clear();
                 state.active_pen_path = None;

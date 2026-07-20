@@ -4,7 +4,7 @@ IrohaPaint loads every `*.irohabrush` file in this directory at startup.
 Use **Reload Brushes** in Brush Settings after adding or editing a file while the app is running.
 
 ```ini
-version=1
+version=2
 name=My Brush
 tip=ellipse
 tip_roundness=0.75

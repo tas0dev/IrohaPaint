@@ -35,6 +35,7 @@ impl BezierPath {
             handle_in,
             handle_out,
             kind: NodeKind::Smooth,
+            width: start.width + (end.width - start.width) * t,
         };
         if end_index == 0 {
             self.nodes.push(node);

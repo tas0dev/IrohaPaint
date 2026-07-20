@@ -4,10 +4,10 @@ const BLOB_CAP_SEGMENTS: usize = 6;
 const BLOB_DOT_SEGMENTS: usize = 12;
 
 pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<BezierPath> {
-    if points.len() < 2 {
-        return None;
+    let first = *points.first()?;
+    if points.len() == 1 {
+        return BezierPath::from_nodes(vec![BezierNode::corner(first), BezierNode::corner(first)]);
     }
-
     let tolerance = tolerance.max(0.01);
     let smoothed = smooth_points(points);
     let sampled = resample_points(&smoothed, tolerance * 0.5);
@@ -15,6 +15,7 @@ pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<Bez
     if simplified.len() < 2 {
         return None;
     }
+    let widths = velocity_widths(points, tolerance);
 
     let last_index = simplified.len() - 1;
     let nodes = simplified
@@ -48,6 +49,7 @@ pub fn fit_pencil_stroke(points: &[DocumentPoint], tolerance: f32) -> Option<Bez
                 } else {
                     NodeKind::Smooth
                 },
+                width: nearest_width(*position, points, &widths),
             }
         })
         .collect();
@@ -149,12 +151,45 @@ fn closed_spline(points: Vec<DocumentPoint>) -> Option<BezierPath> {
                 handle_in: DocumentPoint::new(position.x - tangent.x, position.y - tangent.y),
                 handle_out: DocumentPoint::new(position.x + tangent.x, position.y + tangent.y),
                 kind: NodeKind::Smooth,
+                width: 1.0,
             }
         })
         .collect();
     let mut path = BezierPath::from_nodes(nodes)?;
     path.close();
     Some(path)
+}
+
+fn velocity_widths(points: &[DocumentPoint], tolerance: f32) -> Vec<f32> {
+    let scale = tolerance.max(0.01) * 2.5;
+    let raw = (0..points.len())
+        .map(|index| {
+            let previous = points[index.saturating_sub(1)];
+            let next = points[(index + 1).min(points.len() - 1)];
+            let velocity = distance(previous, next) / scale;
+            (1.0 / (1.0 + velocity * 0.22)).clamp(0.12, 1.0)
+        })
+        .collect::<Vec<_>>();
+    if raw.len() < 3 {
+        return raw;
+    }
+    let mut smoothed = Vec::with_capacity(raw.len());
+    smoothed.push(raw[0]);
+    for window in raw.windows(3) {
+        smoothed.push((window[0] + window[1] * 2.0 + window[2]) / 4.0);
+    }
+    smoothed.push(*raw.last().expect("a stroke has widths"));
+    smoothed
+}
+
+fn nearest_width(point: DocumentPoint, samples: &[DocumentPoint], widths: &[f32]) -> f32 {
+    samples
+        .iter()
+        .zip(widths)
+        .min_by(|(first, _), (second, _)| {
+            distance(point, **first).total_cmp(&distance(point, **second))
+        })
+        .map_or(1.0, |(_, width)| *width)
 }
 
 fn unit_normal(first: DocumentPoint, second: DocumentPoint) -> DocumentPoint {

@@ -171,7 +171,12 @@ fn appended_path_kind(
     position: DocumentPoint,
     handle_out: DocumentPoint,
 ) -> ObjectKind {
-    let ObjectKind::Path { path, style } = original else {
+    let ObjectKind::Path {
+        path,
+        style,
+        variable_width,
+    } = original
+    else {
         return original.clone();
     };
     let mut path = path.clone();
@@ -179,6 +184,7 @@ fn appended_path_kind(
     ObjectKind::Path {
         path,
         style: *style,
+        variable_width: *variable_width,
     }
 }
 
@@ -192,11 +198,16 @@ fn translated_kind(kind: &ObjectKind, delta: DocumentPoint) -> ObjectKind {
             bounds: bounds.translated(delta),
             style: *style,
         },
-        ObjectKind::Path { path, style } => ObjectKind::Path {
+        ObjectKind::Path {
+            path,
+            style,
+            variable_width,
+        } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(point.x + delta.x, point.y + delta.y)
             }),
             style: *style,
+            variable_width: *variable_width,
         },
     }
 }
@@ -212,7 +223,11 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
             bounds: new_bounds,
             style: *style,
         },
-        ObjectKind::Path { path, style } => ObjectKind::Path {
+        ObjectKind::Path {
+            path,
+            style,
+            variable_width,
+        } => ObjectKind::Path {
             path: transformed_path(path, |point| {
                 DocumentPoint::new(
                     scale_axis(
@@ -232,6 +247,7 @@ fn resized_kind(kind: &ObjectKind, new_bounds: DocumentRect) -> ObjectKind {
                 )
             }),
             style: *style,
+            variable_width: *variable_width,
         },
     }
 }
@@ -276,6 +292,7 @@ fn transformed_path(
         handle_in: transform(first.handle_in),
         handle_out: transform(first.handle_out),
         kind: first.kind,
+        width: first.width,
     });
     for node in nodes {
         transformed.push_node(BezierNode {
@@ -283,6 +300,7 @@ fn transformed_path(
             handle_in: transform(node.handle_in),
             handle_out: transform(node.handle_out),
             kind: node.kind,
+            width: node.width,
         });
     }
     if path.is_closed() {
@@ -300,7 +318,12 @@ fn edited_path_kind(
     point: DocumentPoint,
     independent: bool,
 ) -> ObjectKind {
-    let ObjectKind::Path { path, style } = original else {
+    let ObjectKind::Path {
+        path,
+        style,
+        variable_width,
+    } = original
+    else {
         return original.clone();
     };
     let mut path = path.clone();
@@ -315,6 +338,7 @@ fn edited_path_kind(
     ObjectKind::Path {
         path,
         style: *style,
+        variable_width: *variable_width,
     }
 }
 

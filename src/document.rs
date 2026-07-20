@@ -1,6 +1,8 @@
 mod path_edit;
+mod stroke_outline;
 
 use path_edit::simplification_candidates;
+pub(crate) use stroke_outline::variable_stroke_outlines;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DocumentPoint {
@@ -134,6 +136,8 @@ pub struct BezierNode {
     pub handle_in: DocumentPoint,
     pub handle_out: DocumentPoint,
     pub kind: NodeKind,
+    /// Relative width of a variable-width stroke at this node.
+    pub width: f32,
 }
 
 impl BezierNode {
@@ -143,6 +147,7 @@ impl BezierNode {
             handle_in: position,
             handle_out: position,
             kind: NodeKind::Corner,
+            width: 1.0,
         }
     }
 
@@ -152,6 +157,7 @@ impl BezierNode {
             handle_in: mirror_point(handle_out, position),
             handle_out,
             kind: NodeKind::Symmetric,
+            width: 1.0,
         }
     }
 }
@@ -272,6 +278,11 @@ pub enum StrokeJoin {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StrokeStyle {
     pub width: f32,
+    pub minimum_width: f32,
+    pub taper_start: f32,
+    pub taper_end: f32,
+    pub tip_roundness: f32,
+    pub tip_angle: f32,
     pub cap: StrokeCap,
     pub join: StrokeJoin,
     pub color: DocumentColor,
@@ -281,6 +292,11 @@ impl Default for StrokeStyle {
     fn default() -> Self {
         Self {
             width: 2.0,
+            minimum_width: 1.0,
+            taper_start: 0.0,
+            taper_end: 0.0,
+            tip_roundness: 1.0,
+            tip_angle: 0.0,
             cap: StrokeCap::Round,
             join: StrokeJoin::Round,
             color: DocumentColor::BLACK,
@@ -307,6 +323,7 @@ pub enum ObjectKind {
     Path {
         path: BezierPath,
         style: ObjectStyle,
+        variable_width: bool,
     },
 }
 
@@ -527,21 +544,27 @@ impl Document {
         self.add_object(ObjectKind::Path {
             path: BezierPath::new(first_node),
             style,
+            variable_width: false,
         })
     }
 
-    pub fn add_fitted_path(&mut self, path: BezierPath, stroke: StrokeStyle) -> ObjectId {
-        self.add_styled_path(
+    pub fn add_variable_width_path(&mut self, path: BezierPath, stroke: StrokeStyle) -> ObjectId {
+        self.add_object(ObjectKind::Path {
             path,
-            ObjectStyle {
+            style: ObjectStyle {
                 stroke,
                 ..ObjectStyle::default()
             },
-        )
+            variable_width: true,
+        })
     }
 
     pub fn add_styled_path(&mut self, path: BezierPath, style: ObjectStyle) -> ObjectId {
-        self.add_object(ObjectKind::Path { path, style })
+        self.add_object(ObjectKind::Path {
+            path,
+            style,
+            variable_width: false,
+        })
     }
 
     pub fn append_path_node(&mut self, id: ObjectId, node: BezierNode) {
