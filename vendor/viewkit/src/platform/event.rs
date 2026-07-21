@@ -29,6 +29,9 @@ pub enum KeyCode {
     Space,
     Z,
     Y,
+    C,
+    V,
+    D,
 }
 
 #[derive(Clone, Debug, PartialEq)]

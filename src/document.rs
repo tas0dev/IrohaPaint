@@ -1150,6 +1150,106 @@ impl Document {
         self.edit_object(id, |object| object.translate(delta));
     }
 
+    pub fn replace_object_kinds(&mut self, replacements: &[(ObjectId, ObjectKind)]) -> bool {
+        if replacements.is_empty()
+            || !replacements
+                .iter()
+                .any(|(id, kind)| self.object(*id).is_some_and(|object| object.kind != *kind))
+        {
+            return false;
+        }
+        self.record_change();
+        for (id, kind) in replacements {
+            if let Some((layer_index, object_index)) = self.find_object_index(*id) {
+                self.layers[layer_index].objects[object_index].kind = kind.clone();
+            }
+        }
+        self.selected_object = replacements.last().map(|(id, _)| *id);
+        true
+    }
+
+    pub fn duplicate_objects(&mut self, ids: &[ObjectId], offset: DocumentPoint) -> Vec<ObjectId> {
+        let Some(layer_index) = self.selected_layer else {
+            return Vec::new();
+        };
+        let originals = self.layers[layer_index]
+            .objects
+            .iter()
+            .filter(|object| ids.contains(&object.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if originals.is_empty() {
+            return Vec::new();
+        }
+        self.record_change();
+        let mut inserted = Vec::with_capacity(originals.len());
+        for mut object in originals {
+            object.id = ObjectId(self.next_object_id);
+            self.next_object_id += 1;
+            object.translate(offset);
+            inserted.push(object.id);
+            self.layers[layer_index].objects.push(object);
+        }
+        self.selected_object = inserted.last().copied();
+        inserted
+    }
+
+    pub fn insert_object_kinds(
+        &mut self,
+        kinds: &[ObjectKind],
+        offset: DocumentPoint,
+    ) -> Vec<ObjectId> {
+        let Some(layer_index) = self.selected_layer else {
+            return Vec::new();
+        };
+        if kinds.is_empty() {
+            return Vec::new();
+        }
+        self.record_change();
+        let mut inserted = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            let id = ObjectId(self.next_object_id);
+            self.next_object_id += 1;
+            let mut object = DocumentObject {
+                id,
+                kind: kind.clone(),
+            };
+            object.translate(offset);
+            self.layers[layer_index].objects.push(object);
+            inserted.push(id);
+        }
+        self.selected_object = inserted.last().copied();
+        inserted
+    }
+
+    pub fn delete_objects(&mut self, ids: &[ObjectId]) -> bool {
+        let Some(layer_index) = self.selected_layer else {
+            return false;
+        };
+        if ids.is_empty()
+            || !self.layers[layer_index]
+                .objects
+                .iter()
+                .any(|object| ids.contains(&object.id))
+        {
+            return false;
+        }
+        self.record_change();
+        self.layers[layer_index]
+            .objects
+            .retain(|object| !ids.contains(&object.id));
+        self.selected_object = None;
+        true
+    }
+
+    pub fn move_objects_forward(&mut self, ids: &[ObjectId]) -> bool {
+        self.reorder_objects(ids, true)
+    }
+
+    pub fn move_objects_backward(&mut self, ids: &[ObjectId]) -> bool {
+        self.reorder_objects(ids, false)
+    }
+
     pub fn set_selected_stroke_color(&mut self, color: DocumentColor) {
         let Some(id) = self.selected_object else {
             return;
@@ -1380,6 +1480,41 @@ impl Document {
                     .position(|object| object.id == id)
                     .map(|object_index| (layer_index, object_index))
             })
+    }
+
+    fn reorder_objects(&mut self, ids: &[ObjectId], forward: bool) -> bool {
+        let Some(layer_index) = self.selected_layer else {
+            return false;
+        };
+        let objects = &self.layers[layer_index].objects;
+        let can_move = if forward {
+            (0..objects.len().saturating_sub(1)).any(|index| {
+                ids.contains(&objects[index].id) && !ids.contains(&objects[index + 1].id)
+            })
+        } else {
+            (1..objects.len()).any(|index| {
+                ids.contains(&objects[index].id) && !ids.contains(&objects[index - 1].id)
+            })
+        };
+        if !can_move {
+            return false;
+        }
+        self.record_change();
+        let objects = &mut self.layers[layer_index].objects;
+        if forward {
+            for index in (0..objects.len() - 1).rev() {
+                if ids.contains(&objects[index].id) && !ids.contains(&objects[index + 1].id) {
+                    objects.swap(index, index + 1);
+                }
+            }
+        } else {
+            for index in 1..objects.len() {
+                if ids.contains(&objects[index].id) && !ids.contains(&objects[index - 1].id) {
+                    objects.swap(index, index - 1);
+                }
+            }
+        }
+        true
     }
 
     fn record_change(&mut self) {

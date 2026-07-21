@@ -431,6 +431,15 @@ where
                     Key::Character(character) if character.as_str().eq_ignore_ascii_case("y") => {
                         Some(KeyCode::Y)
                     }
+                    Key::Character(character) if character.as_str().eq_ignore_ascii_case("c") => {
+                        Some(KeyCode::C)
+                    }
+                    Key::Character(character) if character.as_str().eq_ignore_ascii_case("v") => {
+                        Some(KeyCode::V)
+                    }
+                    Key::Character(character) if character.as_str().eq_ignore_ascii_case("d") => {
+                        Some(KeyCode::D)
+                    }
                     _ => None,
                 };
 

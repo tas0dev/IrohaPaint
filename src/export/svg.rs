@@ -101,7 +101,7 @@ pub(crate) fn serialize_layer(
     document: &Document,
     layer_index: usize,
     viewport: DocumentRect,
-    preview: Option<(ObjectId, &ObjectKind)>,
+    previews: &[(ObjectId, &ObjectKind)],
     extra: Option<&ObjectKind>,
 ) -> Result<String, ExportError> {
     let Some(layer) = document.layers().get(layer_index) else {
@@ -120,13 +120,11 @@ pub(crate) fn serialize_layer(
     source.push_str("<g>");
     write_paint_layer(&mut source, layer.paint())?;
     for object in layer.objects() {
-        if preview.is_some_and(|(id, _)| id == object.id()) {
-            continue;
+        if let Some((_, kind)) = previews.iter().find(|(id, _)| *id == object.id()) {
+            write_object(&mut source, kind, &mut mask_id);
+        } else {
+            write_object(&mut source, object.kind(), &mut mask_id);
         }
-        write_object(&mut source, object.kind(), &mut mask_id);
-    }
-    if let Some((_, kind)) = preview {
-        write_object(&mut source, kind, &mut mask_id);
     }
     if let Some(extra) = extra {
         write_object(&mut source, extra, &mut mask_id);

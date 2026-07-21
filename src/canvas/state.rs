@@ -4,7 +4,7 @@ use std::rc::Rc;
 use super::coordinates::CanvasTransform;
 use super::hit_test::SegmentHit;
 use super::interaction::Interaction;
-use crate::document::{DocumentRect, NodeComponent, ObjectId};
+use crate::document::{Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind};
 use viewkit::platform::KeyModifiers;
 use viewkit::prelude::{ImageData, Point};
 
@@ -26,6 +26,8 @@ pub(crate) struct CanvasState {
     pub transform_initialized: bool,
     pub interaction: Interaction,
     pub active_pen_path: Option<ObjectId>,
+    pub selected_objects: Vec<ObjectId>,
+    pub object_clipboard: Vec<ObjectKind>,
     pub selected_nodes: Vec<(ObjectId, usize)>,
     pub hovered_node: Option<(ObjectId, usize, NodeComponent)>,
     pub hovered_segment: Option<(ObjectId, SegmentHit)>,
@@ -78,6 +80,144 @@ impl CanvasController {
     }
 
     pub fn reset_for_document(&self) {
-        *self.state.borrow_mut() = CanvasState::default();
+        let clipboard = self.state.borrow().object_clipboard.clone();
+        *self.state.borrow_mut() = CanvasState {
+            object_clipboard: clipboard,
+            ..CanvasState::default()
+        };
+    }
+
+    pub fn selection_count(&self) -> usize {
+        self.state.borrow().selected_objects.len()
+    }
+
+    pub fn clear_selection(&self) {
+        let mut state = self.state.borrow_mut();
+        state.selected_objects.clear();
+        state.selected_nodes.clear();
+        state.hovered_node = None;
+        state.hovered_segment = None;
+        state.active_pen_path = None;
+    }
+
+    pub fn copy_selection(&self, document: &Document) -> bool {
+        let selected = self.state.borrow().selected_objects.clone();
+        let kinds = document
+            .selected_layer()
+            .and_then(|index| document.layers().get(index))
+            .into_iter()
+            .flat_map(|layer| layer.objects())
+            .filter(|object| selected.contains(&object.id()))
+            .map(|object| object.kind().clone())
+            .collect::<Vec<_>>();
+        if kinds.is_empty() {
+            return false;
+        }
+        self.state.borrow_mut().object_clipboard = kinds;
+        true
+    }
+
+    pub fn duplicate_selection(&self, document: &mut Document) -> bool {
+        let selected = self.state.borrow().selected_objects.clone();
+        let inserted = document.duplicate_objects(&selected, DocumentPoint::new(12.0, 12.0));
+        self.set_object_selection(inserted)
+    }
+
+    pub fn paste(&self, document: &mut Document) -> bool {
+        let clipboard = self.state.borrow().object_clipboard.clone();
+        let inserted = document.insert_object_kinds(&clipboard, DocumentPoint::new(12.0, 12.0));
+        self.set_object_selection(inserted)
+    }
+
+    pub fn flip_selection(&self, document: &mut Document, horizontal: bool) -> bool {
+        let selected = self.state.borrow().selected_objects.clone();
+        let Some(bounds) = selected
+            .iter()
+            .filter_map(|id| document.object(*id).map(|object| object.bounds()))
+            .reduce(union_rects)
+        else {
+            return false;
+        };
+        let center = DocumentPoint::new(
+            bounds.x + bounds.width * 0.5,
+            bounds.y + bounds.height * 0.5,
+        );
+        let replacements = selected
+            .iter()
+            .filter_map(|id| {
+                document.object(*id).map(|object| {
+                    (
+                        *id,
+                        super::interaction::flipped_kind(object.kind(), center, horizontal),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        document.replace_object_kinds(&replacements)
+    }
+
+    pub fn move_selection_forward(&self, document: &mut Document) -> bool {
+        document.move_objects_forward(&self.state.borrow().selected_objects)
+    }
+
+    pub fn move_selection_backward(&self, document: &mut Document) -> bool {
+        document.move_objects_backward(&self.state.borrow().selected_objects)
+    }
+
+    pub fn delete_selection(&self, document: &mut Document) -> bool {
+        let selected = self.state.borrow().selected_objects.clone();
+        if !document.delete_objects(&selected) {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        state.selected_objects.clear();
+        state.selected_nodes.clear();
+        true
+    }
+
+    pub fn select_all_objects(&self, document: &mut Document) -> bool {
+        let Some(layer) = document
+            .selected_layer()
+            .and_then(|index| document.layers().get(index))
+        else {
+            return false;
+        };
+        let selected = layer.objects().iter().map(|object| object.id()).collect();
+        self.set_object_selection_with_document(selected, document)
+    }
+
+    fn set_object_selection(&self, selected: Vec<ObjectId>) -> bool {
+        if selected.is_empty() {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        state.selected_objects = selected;
+        state.selected_nodes.clear();
+        true
+    }
+
+    fn set_object_selection_with_document(
+        &self,
+        selected: Vec<ObjectId>,
+        document: &mut Document,
+    ) -> bool {
+        if !self.set_object_selection(selected.clone()) {
+            return false;
+        }
+        document.select_object(selected.last().copied());
+        true
+    }
+}
+
+fn union_rects(first: DocumentRect, second: DocumentRect) -> DocumentRect {
+    let left = first.x.min(second.x);
+    let top = first.y.min(second.y);
+    let right = (first.x + first.width).max(second.x + second.width);
+    let bottom = (first.y + first.height).max(second.y + second.height);
+    DocumentRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
     }
 }

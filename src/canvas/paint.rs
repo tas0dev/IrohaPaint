@@ -13,13 +13,16 @@ use crate::editor::EditorTool;
 
 use super::coordinates::CanvasTransform;
 use super::hit_test::SegmentHit;
-use super::interaction::{Interaction, ResizeHandle, ShapeDraftKind, kind_bounds};
+use super::interaction::{
+    Interaction, ROTATE_HANDLE_OFFSET, ResizeHandle, ShapeDraftKind, kind_bounds,
+};
 use super::state::ReferenceImage;
 
 const HANDLE_SIZE: f32 = 8.0;
 const CONTROL_HANDLE_SIZE: f32 = 6.0;
 
 pub(crate) struct NodePresentation<'a> {
+    pub selected_objects: &'a [ObjectId],
     pub selected: &'a [(ObjectId, usize)],
     pub hovered: Option<(ObjectId, usize, NodeComponent)>,
     pub segment: Option<(ObjectId, SegmentHit)>,
@@ -132,18 +135,25 @@ pub fn paint_editor_canvas(
             continue;
         }
         if document.clip_base_layer(layer_index).is_some() {
-            let preview = layer.objects().iter().find_map(|object| {
-                interaction
-                    .preview_kind(object.id())
-                    .map(|kind| (object.id(), kind))
-            });
+            let previews = layer
+                .objects()
+                .iter()
+                .filter_map(|object| {
+                    interaction
+                        .preview_kind(object.id())
+                        .map(|kind| (object.id(), kind))
+                })
+                .collect::<Vec<_>>();
             let extra = (document.selected_layer() == Some(layer_index))
                 .then_some(clipped_draft.as_ref())
                 .flatten();
             if paint_clipped_layer(
                 document,
                 layer_index,
-                preview.as_ref().map(|(id, kind)| (*id, kind)),
+                &previews
+                    .iter()
+                    .map(|(id, kind)| (*id, kind))
+                    .collect::<Vec<_>>(),
                 extra,
                 transform,
                 bounds,
@@ -226,6 +236,21 @@ pub fn paint_editor_canvas(
             {
                 paint_segment_insertion(hit.point, transform, bounds, context);
             }
+        } else if active_tool == EditorTool::Select {
+            let selection_bounds = nodes
+                .selected_objects
+                .iter()
+                .filter_map(|id| {
+                    document.object(*id).map(|object| {
+                        interaction
+                            .preview_kind(*id)
+                            .map_or_else(|| object.bounds(), |kind| kind_bounds(&kind))
+                    })
+                })
+                .reduce(union_document_rect);
+            if let Some(selection_bounds) = selection_bounds {
+                paint_selection(selection_bounds, transform, bounds, true, context);
+            }
         } else if !matches!(
             active_tool,
             EditorTool::Pencil
@@ -234,7 +259,13 @@ pub fn paint_editor_canvas(
                 | EditorTool::Eraser
                 | EditorTool::BlobBrush
         ) {
-            paint_selection(kind_bounds(&selection_kind), transform, bounds, context);
+            paint_selection(
+                kind_bounds(&selection_kind),
+                transform,
+                bounds,
+                false,
+                context,
+            );
         }
     }
 
@@ -244,7 +275,7 @@ pub fn paint_editor_canvas(
 fn paint_clipped_layer(
     document: &Document,
     layer_index: usize,
-    preview: Option<(ObjectId, &ObjectKind)>,
+    previews: &[(ObjectId, &ObjectKind)],
     extra: Option<&ObjectKind>,
     transform: CanvasTransform,
     canvas_bounds: Rect,
@@ -269,14 +300,18 @@ fn paint_clipped_layer(
         document,
         layer_index,
         viewport,
-        preview,
+        previews,
         extra,
     ) {
         Ok(source) => source,
         Err(_) => return false,
     };
     let base_source = match crate::export::serialize_layer_content_for_canvas(
-        document, base_index, viewport, None, None,
+        document,
+        base_index,
+        viewport,
+        &[],
+        None,
     ) {
         Ok(source) => source,
         Err(_) => return false,
@@ -685,7 +720,7 @@ fn paint_draft(
                 },
             };
             paint_kind(&kind, transform, canvas_bounds, context);
-            paint_selection(bounds, transform, canvas_bounds, context);
+            paint_selection(bounds, transform, canvas_bounds, false, context);
         }
         Interaction::DrawingPencil {
             preview: Some(path),
@@ -717,6 +752,17 @@ fn paint_draft(
             paint_node_controls(&node, true, None, transform, canvas_bounds, context);
         }
         Interaction::SelectingNodes { start, current, .. } => {
+            let rect = transform.document_rect_to_canvas(
+                DocumentRect::from_points(*start, *current),
+                canvas_bounds,
+            );
+            context.display_list.push(DrawCommand::StrokeRect {
+                rect,
+                color: context.theme.colors.accent,
+                width: 1.0,
+            });
+        }
+        Interaction::SelectingObjects { start, current, .. } => {
             let rect = transform.document_rect_to_canvas(
                 DocumentRect::from_points(*start, *current),
                 canvas_bounds,
@@ -977,6 +1023,7 @@ fn paint_selection(
     bounds: DocumentRect,
     transform: CanvasTransform,
     canvas_bounds: Rect,
+    rotation_handle: bool,
     context: &mut PaintContext<'_>,
 ) {
     let rect = transform.document_rect_to_canvas(bounds, canvas_bounds);
@@ -989,6 +1036,41 @@ fn paint_selection(
     for handle in ResizeHandle::ALL {
         let center = transform.document_to_canvas(handle.position(bounds), canvas_bounds);
         paint_handle(center, context);
+    }
+    if rotation_handle {
+        let top = transform.document_to_canvas(
+            DocumentPoint::new(bounds.x + bounds.width * 0.5, bounds.y),
+            canvas_bounds,
+        );
+        let rotate = Point::new(top.x, top.y - ROTATE_HANDLE_OFFSET);
+        let rect = Rect::new(
+            rotate.x - HANDLE_SIZE / 2.0,
+            rotate.y - HANDLE_SIZE / 2.0,
+            HANDLE_SIZE,
+            HANDLE_SIZE,
+        );
+        context.display_list.push(DrawCommand::FillEllipse {
+            rect,
+            color: context.theme.colors.elevated_surface,
+        });
+        context.display_list.push(DrawCommand::StrokeEllipse {
+            rect,
+            color: context.theme.colors.accent,
+            width: 1.0,
+        });
+    }
+}
+
+fn union_document_rect(first: DocumentRect, second: DocumentRect) -> DocumentRect {
+    let left = first.x.min(second.x);
+    let top = first.y.min(second.y);
+    let right = (first.x + first.width).max(second.x + second.width);
+    let bottom = (first.y + first.height).max(second.y + second.height);
+    DocumentRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
     }
 }
 

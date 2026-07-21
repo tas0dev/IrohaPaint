@@ -237,6 +237,7 @@ pub fn view(
                                 if document.update(Document::delete_selected_layer) {
                                     let mut canvas = canvas.get_mut();
                                     canvas.active_pen_path = None;
+                                    canvas.selected_objects.clear();
                                     canvas.selected_nodes.clear();
                                     canvas.hovered_node = None;
                                     canvas.hovered_segment = None;
@@ -580,6 +581,7 @@ fn selected_path_nodes(
 fn clear_canvas_selection(canvas: &CanvasController) {
     let mut canvas = canvas.get_mut();
     canvas.active_pen_path = None;
+    canvas.selected_objects.clear();
     canvas.selected_nodes.clear();
     canvas.hovered_node = None;
     canvas.hovered_segment = None;
@@ -599,7 +601,7 @@ fn layer_preview(document: &Document, layer_index: usize) -> Option<Image> {
             width,
             height,
         },
-        None,
+        &[],
         None,
     )
     .ok()?;

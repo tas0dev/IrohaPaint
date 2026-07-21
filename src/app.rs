@@ -15,6 +15,7 @@ pub struct IrohaPaint {
     export_status: State<String>,
     project_path: State<Option<PathBuf>>,
     file_menu: PopupMenuState,
+    edit_menu: PopupMenuState,
     pen_menu: PopupMenuState,
     document_settings: ModalState,
     brush_settings: ModalState,
@@ -50,6 +51,7 @@ impl App for IrohaPaint {
             export_status: State::new(String::new()),
             project_path: State::new(None),
             file_menu: PopupMenuState::new(),
+            edit_menu: PopupMenuState::new(),
             pen_menu: PopupMenuState::new(),
             document_settings: ModalState::new(),
             brush_settings: ModalState::new(),
@@ -97,9 +99,11 @@ impl App for IrohaPaint {
             .gap(StackGap::None)
             .child(menu_bar::view(
                 self.document.clone(),
+                self.canvas.clone(),
                 self.export_status.clone(),
                 self.project_path.clone(),
                 self.file_menu.clone(),
+                self.edit_menu.clone(),
             ))
             .child(Divider::new())
             .child(
@@ -175,7 +179,13 @@ impl App for IrohaPaint {
             self.smoothing.clone(),
             self.active_tool.clone(),
         );
+        let edit_menu = menu_bar::edit_menu(
+            self.document.clone(),
+            self.canvas.clone(),
+            self.active_tool.clone(),
+        );
         let content = PopupMenuHost::new(content, pen_menu, self.pen_menu.clone());
+        let content = PopupMenuHost::new(content, edit_menu, self.edit_menu.clone());
         let content = PopupMenuHost::new(content, menu, self.file_menu.clone());
         let document_settings = settings_dialog::document_settings(
             self.document.clone(),

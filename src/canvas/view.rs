@@ -6,14 +6,17 @@ use viewkit::view::{Constraints, MeasureContext, PaintContext};
 use crate::brush::{BrushKind, BrushLibrary};
 use crate::document::{
     BezierNode, CanvasSize, Document, DocumentColor, DocumentPoint, DocumentRect, NodeComponent,
-    ObjectKind, ObjectStyle, PaintDab,
+    ObjectId, ObjectKind, ObjectStyle, PaintDab,
 };
 use crate::editor::{EditorTool, EraserMode};
 
 use super::hit_test::{
     fill_object_at, is_first_path_node, object_at, path_node_at, path_segment_at, resize_handle_at,
 };
-use super::interaction::{Interaction, ShapeDraftKind};
+use super::interaction::{
+    Interaction, ROTATE_HANDLE_OFFSET, ShapeDraftKind, group_resized_kind, kind_bounds,
+    rotated_kind, translated_kind,
+};
 use super::paint::{NodePresentation, paint_editor_canvas};
 use super::raster_stroke::interpolate_dabs;
 use super::region_fill;
@@ -65,41 +68,103 @@ impl EditorCanvas {
         let inside_drawing_bounds =
             drawing_bounds.is_none_or(|drawing_bounds| drawing_bounds.contains(document_point));
 
-        match self.active_tool.get() {
+        let active_tool = self.active_tool.get();
+        if !matches!(active_tool, EditorTool::Select | EditorTool::NodeEdit) {
+            self.controller.get_mut().selected_objects.clear();
+        }
+        match active_tool {
             EditorTool::Select => {
                 let current_document = self.document.get();
-                if let Some(id) = current_document.selected_object()
-                    && let Some(object) = current_document.object(id)
-                    && let Some(handle) =
-                        resize_handle_at(object.bounds(), document_point, tolerance)
+                let (mut selected, modifiers) = {
+                    let state = self.controller.get();
+                    (state.selected_objects.clone(), state.modifiers)
+                };
+                selected.retain(|id| current_document.object(*id).is_some());
+                let originals = selected
+                    .iter()
+                    .filter_map(|id| {
+                        current_document
+                            .object(*id)
+                            .map(|object| (*id, object.kind().clone()))
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(selection_bounds) = kinds_bounds(&originals) {
+                    if let Some(handle) =
+                        resize_handle_at(selection_bounds, document_point, tolerance)
+                    {
+                        self.controller.get_mut().interaction = Interaction::ResizingObjects {
+                            originals,
+                            original_bounds: selection_bounds,
+                            anchor: handle.opposite(selection_bounds),
+                            current: document_point,
+                            handle,
+                        };
+                        return;
+                    }
+                    let rotate = DocumentPoint::new(
+                        selection_bounds.x + selection_bounds.width * 0.5,
+                        selection_bounds.y - ROTATE_HANDLE_OFFSET / transform.zoom().max(0.01),
+                    );
+                    if point_distance(rotate, document_point) <= tolerance {
+                        let center = rect_center(selection_bounds);
+                        let angle = angle_from(center, document_point);
+                        self.controller.get_mut().interaction = Interaction::RotatingObjects {
+                            originals,
+                            center,
+                            start_angle: angle,
+                            current_angle: angle,
+                        };
+                        return;
+                    }
+                }
+                let hit = object_at(&current_document, document_point, tolerance);
+                if modifiers.shift
+                    && let Some(id) = hit
                 {
-                    self.controller.get_mut().interaction = Interaction::Resizing {
-                        id,
-                        original: object.kind().clone(),
-                        anchor: handle.opposite(object.bounds()),
+                    if let Some(index) = selected.iter().position(|selected| *selected == id) {
+                        selected.remove(index);
+                    } else {
+                        selected.push(id);
+                    }
+                    let primary = selected.last().copied();
+                    drop(current_document);
+                    self.document
+                        .update(|document| document.select_object(primary));
+                    let mut state = self.controller.get_mut();
+                    state.selected_objects = selected;
+                    state.interaction = Interaction::Idle;
+                    return;
+                }
+                if let Some(id) = hit {
+                    if !selected.contains(&id) {
+                        selected.clear();
+                        selected.push(id);
+                    }
+                    let originals = selected
+                        .iter()
+                        .filter_map(|id| {
+                            current_document
+                                .object(*id)
+                                .map(|object| (*id, object.kind().clone()))
+                        })
+                        .collect::<Vec<_>>();
+                    drop(current_document);
+                    self.document
+                        .update(|document| document.select_object(Some(id)));
+                    let mut state = self.controller.get_mut();
+                    state.selected_objects = selected;
+                    state.interaction = Interaction::MovingObjects {
+                        originals,
+                        start: document_point,
                         current: document_point,
-                        handle,
                     };
                     return;
                 }
-
-                let hit = object_at(&current_document, document_point, tolerance);
-                let original = hit.and_then(|id| {
-                    current_document
-                        .object(id)
-                        .map(|object| (id, object.kind().clone()))
-                });
                 drop(current_document);
-
-                self.document.update(|document| document.select_object(hit));
-                self.controller.get_mut().interaction = match original {
-                    Some((id, original)) => Interaction::Moving {
-                        id,
-                        original,
-                        start: document_point,
-                        current: document_point,
-                    },
-                    None => Interaction::Idle,
+                self.controller.get_mut().interaction = Interaction::SelectingObjects {
+                    start: document_point,
+                    current: document_point,
+                    additive: modifiers.shift,
                 };
             }
             EditorTool::NodeEdit => {
@@ -205,6 +270,7 @@ impl EditorCanvas {
                 drop(current_document);
                 self.document.update(|document| document.select_object(hit));
                 let mut state = self.controller.get_mut();
+                state.selected_objects = hit.into_iter().collect();
                 state.selected_nodes.clear();
                 state.hovered_segment = None;
                 state.interaction = Interaction::Idle;
@@ -429,10 +495,25 @@ impl EditorCanvas {
                 *current = constrained_point;
                 true
             }
-            Interaction::Moving { current, .. }
-            | Interaction::Resizing { current, .. }
-            | Interaction::SelectingNodes { current, .. } => {
+            Interaction::MovingObjects { current, .. }
+            | Interaction::ResizingObjects { current, .. }
+            | Interaction::SelectingNodes { current, .. }
+            | Interaction::SelectingObjects { current, .. } => {
                 *current = document_point;
+                true
+            }
+            Interaction::RotatingObjects {
+                center,
+                start_angle,
+                current_angle,
+                ..
+            } => {
+                *current_angle = angle_from(*center, document_point);
+                if modifiers.shift {
+                    let step = std::f32::consts::FRAC_PI_4 / 3.0;
+                    *current_angle =
+                        *start_angle + ((*current_angle - *start_angle) / step).round() * step;
+                }
                 true
             }
             Interaction::EditingPathNode {
@@ -635,24 +716,22 @@ impl EditorCanvas {
                 if bounds.width * zoom < MIN_DRAG_SIZE || bounds.height * zoom < MIN_DRAG_SIZE {
                     return;
                 }
-                self.document.update(|document| match kind {
-                    ShapeDraftKind::Rectangle => {
-                        document.add_rectangle_with_style(bounds, style);
-                    }
-                    ShapeDraftKind::Ellipse => {
-                        document.add_ellipse_with_style(bounds, style);
-                    }
+                let id = self.document.update(|document| match kind {
+                    ShapeDraftKind::Rectangle => document.add_rectangle_with_style(bounds, style),
+                    ShapeDraftKind::Ellipse => document.add_ellipse_with_style(bounds, style),
                 });
+                self.controller.get_mut().selected_objects = vec![id];
             }
             Interaction::DrawingPencil {
                 preview: Some(path),
                 brush,
                 ..
             } => {
-                self.document.update(|document| {
+                let id = self.document.update(|document| {
                     document.add_variable_width_path(path, brush.stroke_style())
                 });
                 let mut state = self.controller.get_mut();
+                state.selected_objects = vec![id];
                 state.selected_nodes.clear();
                 state.active_pen_path = None;
             }
@@ -661,9 +740,11 @@ impl EditorCanvas {
                 style,
                 ..
             } => {
-                self.document
+                let id = self
+                    .document
                     .update(|document| document.add_variable_width_path(path, style.stroke));
                 let mut state = self.controller.get_mut();
+                state.selected_objects = vec![id];
                 state.selected_nodes.clear();
                 state.active_pen_path = None;
             }
@@ -703,6 +784,7 @@ impl EditorCanvas {
                     })
                     .unwrap_or(0);
                 let mut state = self.controller.get_mut();
+                state.selected_objects = vec![id];
                 state.active_pen_path = Some(id);
                 state.selected_nodes.clear();
                 state.selected_nodes.push((id, node_index));
@@ -768,25 +850,88 @@ impl EditorCanvas {
                     }
                 }
             }
-            Interaction::Moving {
-                id, start, current, ..
+            Interaction::SelectingObjects {
+                start,
+                current,
+                additive,
+            } => {
+                let selection = DocumentRect::from_points(start, current);
+                let mut selected = if additive {
+                    self.controller.get().selected_objects.clone()
+                } else {
+                    Vec::new()
+                };
+                if selection.width * zoom >= MIN_DRAG_SIZE
+                    || selection.height * zoom >= MIN_DRAG_SIZE
+                {
+                    let crossing = current.x < start.x;
+                    let document = self.document.get();
+                    if let Some(layer_index) = document.selected_layer()
+                        && let Some(layer) = document.layers().get(layer_index)
+                    {
+                        for object in layer.objects() {
+                            let selected_by_marquee = if crossing {
+                                rects_intersect(selection, object.bounds())
+                            } else {
+                                rect_contains_rect(selection, object.bounds())
+                            };
+                            if selected_by_marquee && !selected.contains(&object.id()) {
+                                selected.push(object.id());
+                            }
+                        }
+                    }
+                }
+                let primary = selected.last().copied();
+                self.document
+                    .update(|document| document.select_object(primary));
+                self.controller.get_mut().selected_objects = selected;
+            }
+            Interaction::MovingObjects {
+                originals,
+                start,
+                current,
             } => {
                 let delta = DocumentPoint::new(current.x - start.x, current.y - start.y);
                 if delta.x.abs() * zoom >= 0.5 || delta.y.abs() * zoom >= 0.5 {
+                    let replacements = originals
+                        .iter()
+                        .map(|(id, kind)| (*id, translated_kind(kind, delta)))
+                        .collect::<Vec<_>>();
                     self.document
-                        .update(|document| document.translate_object(id, delta));
+                        .update(|document| document.replace_object_kinds(&replacements));
                 }
             }
-            Interaction::Resizing {
-                id,
+            Interaction::ResizingObjects {
+                originals,
+                original_bounds,
                 anchor,
                 current,
                 ..
             } => {
                 let bounds = DocumentRect::from_points(anchor, current);
                 if bounds.width * zoom >= MIN_DRAG_SIZE && bounds.height * zoom >= MIN_DRAG_SIZE {
+                    let replacements = originals
+                        .iter()
+                        .map(|(id, kind)| (*id, group_resized_kind(kind, original_bounds, bounds)))
+                        .collect::<Vec<_>>();
                     self.document
-                        .update(|document| document.resize_object(id, bounds));
+                        .update(|document| document.replace_object_kinds(&replacements));
+                }
+            }
+            Interaction::RotatingObjects {
+                originals,
+                center,
+                start_angle,
+                current_angle,
+            } => {
+                let angle = current_angle - start_angle;
+                if angle.abs() >= 0.001 {
+                    let replacements = originals
+                        .iter()
+                        .map(|(id, kind)| (*id, rotated_kind(kind, center, angle)))
+                        .collect::<Vec<_>>();
+                    self.document
+                        .update(|document| document.replace_object_kinds(&replacements));
                 }
             }
             _ => {}
@@ -881,7 +1026,7 @@ impl EditorCanvas {
     fn update_cursor(&self, context: &mut EventContext<'_>) {
         let state = self.controller.get();
         let cursor = match &state.interaction {
-            Interaction::Resizing { handle, .. } => match handle {
+            Interaction::ResizingObjects { handle, .. } => match handle {
                 super::interaction::ResizeHandle::TopLeft
                 | super::interaction::ResizeHandle::BottomRight => CursorIcon::NwseResize,
                 super::interaction::ResizeHandle::TopRight
@@ -932,6 +1077,7 @@ impl View for EditorCanvas {
             state.reference_image.as_ref(),
             self.active_tool.get(),
             NodePresentation {
+                selected_objects: &state.selected_objects,
                 selected: &state.selected_nodes,
                 hovered: state.hovered_node,
                 segment: state.hovered_segment,
@@ -1041,8 +1187,14 @@ impl View for EditorCanvas {
                         .update(|document| document.remove_path_nodes(id, &indices));
                     self.controller.get_mut().selected_nodes.clear();
                 } else {
-                    self.document
-                        .update(|document| document.delete_selected_object());
+                    let selected = self.controller.get().selected_objects.clone();
+                    if selected.is_empty() {
+                        self.document
+                            .update(|document| document.delete_selected_object());
+                    } else {
+                        self.document
+                            .update(|document| self.controller.delete_selection(document));
+                    }
                 }
                 context.request_redraw_in(bounds);
                 EventResult::Consumed
@@ -1098,6 +1250,24 @@ impl View for EditorCanvas {
                     }
                     EventResult::Consumed
                 }
+                (KeyCode::C, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
+                    self.controller.copy_selection(&self.document.get());
+                    EventResult::Consumed
+                }
+                (KeyCode::V, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
+                    self.document
+                        .update(|document| self.controller.paste(document));
+                    self.active_tool.set(EditorTool::Select);
+                    context.request_redraw_in(bounds);
+                    EventResult::Consumed
+                }
+                (KeyCode::D, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
+                    self.document
+                        .update(|document| self.controller.duplicate_selection(document));
+                    self.active_tool.set(EditorTool::Select);
+                    context.request_redraw_in(bounds);
+                    EventResult::Consumed
+                }
                 (KeyCode::Z, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
                     let in_progress = matches!(
                         self.controller.get().interaction,
@@ -1113,6 +1283,7 @@ impl View for EditorCanvas {
                         self.document.update(Document::undo);
                     }
                     let mut canvas = self.controller.get_mut();
+                    canvas.selected_objects.clear();
                     canvas.selected_nodes.clear();
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
@@ -1136,6 +1307,7 @@ impl View for EditorCanvas {
                         self.document.update(Document::redo);
                     }
                     let mut canvas = self.controller.get_mut();
+                    canvas.selected_objects.clear();
                     canvas.selected_nodes.clear();
                     canvas.hovered_node = None;
                     canvas.hovered_segment = None;
@@ -1158,6 +1330,12 @@ impl View for EditorCanvas {
                 context.request_redraw_in(bounds);
                 self.update_cursor(context);
                 EventResult::Ignored
+            }
+            ViewEvent::SelectAll if self.active_tool.get() == EditorTool::Select => {
+                self.document
+                    .update(|document| self.controller.select_all_objects(document));
+                context.request_redraw_in(bounds);
+                EventResult::Consumed
             }
             ViewEvent::FocusChanged { focused: false } => {
                 let mut state = self.controller.get_mut();
@@ -1184,6 +1362,57 @@ fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {
         point.x.clamp(bounds.x, bounds.x + bounds.width),
         point.y.clamp(bounds.y, bounds.y + bounds.height),
     )
+}
+
+fn kinds_bounds(kinds: &[(ObjectId, ObjectKind)]) -> Option<DocumentRect> {
+    kinds
+        .iter()
+        .map(|(_, kind)| kind_bounds(kind))
+        .reduce(union_rects)
+}
+
+fn union_rects(first: DocumentRect, second: DocumentRect) -> DocumentRect {
+    let left = first.x.min(second.x);
+    let top = first.y.min(second.y);
+    let right = (first.x + first.width).max(second.x + second.width);
+    let bottom = (first.y + first.height).max(second.y + second.height);
+    DocumentRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    }
+}
+
+fn rects_intersect(first: DocumentRect, second: DocumentRect) -> bool {
+    first.x <= second.x + second.width
+        && first.x + first.width >= second.x
+        && first.y <= second.y + second.height
+        && first.y + first.height >= second.y
+}
+
+fn rect_contains_rect(outer: DocumentRect, inner: DocumentRect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height
+}
+
+fn rect_center(bounds: DocumentRect) -> DocumentPoint {
+    DocumentPoint::new(
+        bounds.x + bounds.width * 0.5,
+        bounds.y + bounds.height * 0.5,
+    )
+}
+
+fn point_distance(first: DocumentPoint, second: DocumentPoint) -> f32 {
+    let x = second.x - first.x;
+    let y = second.y - first.y;
+    (x * x + y * y).sqrt()
+}
+
+fn angle_from(center: DocumentPoint, point: DocumentPoint) -> f32 {
+    (point.y - center.y).atan2(point.x - center.x)
 }
 
 fn document_color(color: Color) -> DocumentColor {

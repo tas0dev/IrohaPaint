@@ -86,6 +86,7 @@ pub fn display_name(path: Option<&Path>) -> String {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 enum UnsavedChoice {
     Save,
     Discard,

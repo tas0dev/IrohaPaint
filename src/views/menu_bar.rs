@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use viewkit::prelude::*;
 
 use crate::document::{CanvasSize, Document};
+use crate::editor::EditorTool;
 use crate::export;
 use crate::{canvas::CanvasController, project, reference};
 
@@ -14,9 +15,11 @@ pub struct DocumentFieldStates {
 
 pub fn view(
     document: State<Document>,
+    canvas: CanvasController,
     export_status: State<String>,
     project_path: State<Option<PathBuf>>,
     file_menu: PopupMenuState,
+    edit_menu: PopupMenuState,
 ) -> impl View + 'static {
     let current_document = document.get();
     let status = export_status.get();
@@ -29,7 +32,7 @@ pub fn view(
             .alignment(StackAlignment::Center)
             .gap(StackGap::Small)
             .child(PopupMenuButton::new("File", file_menu).style(ButtonStyle::Ghost))
-            .child(Button::new("Edit").style(ButtonStyle::Ghost))
+            .child(PopupMenuButton::new("Edit", edit_menu).style(ButtonStyle::Ghost))
             .child(Button::new("View").style(ButtonStyle::Ghost))
             .child(
                 Button::new("Undo")
@@ -37,18 +40,138 @@ pub fn view(
                     .enabled(current_document.can_undo())
                     .on_click({
                         let document = document.clone();
-                        move || document.update(Document::undo)
+                        let canvas = canvas.clone();
+                        move || {
+                            document.update(Document::undo);
+                            canvas.clear_selection();
+                        }
                     }),
             )
             .child(
                 Button::new("Redo")
                     .style(ButtonStyle::Ghost)
                     .enabled(current_document.can_redo())
-                    .on_click(move || document.update(Document::redo)),
+                    .on_click(move || {
+                        document.update(Document::redo);
+                        canvas.clear_selection();
+                    }),
             )
             .child(Text::new(project_name))
             .child(Text::new(status)),
     )
+}
+
+pub fn edit_menu(
+    document: State<Document>,
+    canvas: CanvasController,
+    active_tool: State<EditorTool>,
+) -> Menu {
+    let has_selection = canvas.selection_count() > 0;
+    Menu::new()
+        .item(
+            MenuItem::new("Select All")
+                .shortcut("Ctrl/Cmd+A")
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    let active_tool = active_tool.clone();
+                    move || {
+                        document.update(|document| canvas.select_all_objects(document));
+                        active_tool.set(EditorTool::Select);
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            MenuItem::new("Copy")
+                .shortcut("Ctrl/Cmd+C")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        canvas.copy_selection(&document.get());
+                    }
+                }),
+        )
+        .item(MenuItem::new("Paste").shortcut("Ctrl/Cmd+V").on_select({
+            let document = document.clone();
+            let canvas = canvas.clone();
+            let active_tool = active_tool.clone();
+            move || {
+                document.update(|document| canvas.paste(document));
+                active_tool.set(EditorTool::Select);
+            }
+        }))
+        .item(
+            MenuItem::new("Duplicate")
+                .shortcut("Ctrl/Cmd+D")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    let active_tool = active_tool.clone();
+                    move || {
+                        document.update(|document| canvas.duplicate_selection(document));
+                        active_tool.set(EditorTool::Select);
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            MenuItem::new("Flip Horizontally")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(|document| canvas.flip_selection(document, true));
+                    }
+                }),
+        )
+        .item(
+            MenuItem::new("Flip Vertically")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(|document| canvas.flip_selection(document, false));
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            MenuItem::new("Bring Forward")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(|document| canvas.move_selection_forward(document));
+                    }
+                }),
+        )
+        .item(
+            MenuItem::new("Send Backward")
+                .enabled(has_selection)
+                .on_select({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        document.update(|document| canvas.move_selection_backward(document));
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            MenuItem::new("Delete")
+                .shortcut("Delete")
+                .enabled(has_selection)
+                .on_select(move || {
+                    document.update(|document| canvas.delete_selection(document));
+                }),
+        )
 }
 
 pub fn file_menu(
