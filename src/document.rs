@@ -428,6 +428,9 @@ pub struct Layer {
     paint: PaintLayer,
     visible: bool,
     clipped: bool,
+    locked: bool,
+    alpha_locked: bool,
+    opacity: f32,
     folder: Option<FolderId>,
 }
 
@@ -439,6 +442,9 @@ impl Layer {
             paint: PaintLayer::default(),
             visible: true,
             clipped: false,
+            locked: false,
+            alpha_locked: false,
+            opacity: 1.0,
             folder: None,
         }
     }
@@ -461,6 +467,18 @@ impl Layer {
 
     pub fn is_clipped(&self) -> bool {
         self.clipped
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    pub fn is_alpha_locked(&self) -> bool {
+        self.alpha_locked
+    }
+
+    pub fn opacity(&self) -> f32 {
+        self.opacity
     }
 
     pub fn folder(&self) -> Option<FolderId> {
@@ -595,6 +613,18 @@ impl Document {
 
     pub fn selected_layer(&self) -> Option<usize> {
         self.selected_layer
+    }
+
+    pub fn selected_layer_is_locked(&self) -> bool {
+        self.selected_layer
+            .and_then(|index| self.layers.get(index))
+            .is_some_and(|layer| layer.locked)
+    }
+
+    pub fn selected_layer_is_alpha_locked(&self) -> bool {
+        self.selected_layer
+            .and_then(|index| self.layers.get(index))
+            .is_some_and(|layer| layer.alpha_locked)
     }
 
     pub fn select_layer(&mut self, index: usize) {
@@ -740,6 +770,115 @@ impl Document {
         true
     }
 
+    pub fn toggle_selected_layer_lock(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        self.record_change();
+        self.layers[index].locked = !self.layers[index].locked;
+        self.selected_object = None;
+        true
+    }
+
+    pub fn toggle_selected_layer_alpha_lock(&mut self) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        self.record_change();
+        self.layers[index].alpha_locked = !self.layers[index].alpha_locked;
+        true
+    }
+
+    pub fn set_selected_layer_opacity(&mut self, opacity: f32) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        let opacity = opacity.clamp(0.0, 1.0);
+        if !opacity.is_finite() || (self.layers[index].opacity - opacity).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.record_change();
+        self.layers[index].opacity = opacity;
+        true
+    }
+
+    pub fn assign_selected_layer_to_folder(&mut self, folder: Option<FolderId>) -> bool {
+        let Some(index) = self.selected_layer else {
+            return false;
+        };
+        if folder.is_some_and(|id| !self.folders.iter().any(|entry| entry.id == id))
+            || self.layers[index].folder == folder
+        {
+            return false;
+        }
+        self.record_change();
+        self.layers[index].folder = folder;
+        true
+    }
+
+    pub fn rename_folder(&mut self, id: FolderId, name: &str) -> bool {
+        let name = name.trim();
+        let Some(index) = self.folders.iter().position(|folder| folder.id == id) else {
+            return false;
+        };
+        if name.is_empty() || self.folders[index].name == name {
+            return false;
+        }
+        self.record_change();
+        self.folders[index].name = name.to_owned();
+        true
+    }
+
+    pub fn delete_folder(&mut self, id: FolderId) -> bool {
+        let Some(index) = self.folders.iter().position(|folder| folder.id == id) else {
+            return false;
+        };
+        self.record_change();
+        self.folders.remove(index);
+        for layer in &mut self.layers {
+            if layer.folder == Some(id) {
+                layer.folder = None;
+            }
+        }
+        true
+    }
+
+    pub fn move_layer_to(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.layers.len() || to >= self.layers.len() || from == to {
+            return false;
+        }
+        self.record_change();
+        let layer = self.layers.remove(from);
+        self.layers.insert(to, layer);
+        self.layers[0].clipped = false;
+        self.selected_layer = Some(to);
+        self.selected_object = None;
+        true
+    }
+
+    pub fn place_layer_at(&mut self, from: usize, to: usize, folder: Option<FolderId>) -> bool {
+        if from >= self.layers.len()
+            || to >= self.layers.len()
+            || folder.is_some_and(|id| !self.folders.iter().any(|entry| entry.id == id))
+            || (from == to && self.layers[from].folder == folder)
+        {
+            return false;
+        }
+        self.record_change();
+        if from == to {
+            self.layers[from].folder = folder;
+            self.selected_layer = Some(from);
+        } else {
+            let mut layer = self.layers.remove(from);
+            layer.folder = folder;
+            self.layers.insert(to, layer);
+            self.selected_layer = Some(to);
+        }
+        self.layers[0].clipped = false;
+        self.selected_object = None;
+        true
+    }
+
     /// Returns the shared base for a clipping stack.
     ///
     /// Consecutive clipped layers all use the first non-clipped layer below
@@ -802,11 +941,11 @@ impl Document {
     }
 
     pub fn begin_paint_stroke(&mut self, dabs: &[PaintDab]) -> bool {
-        let selected_visible = self
+        let selected_editable = self
             .selected_layer
             .and_then(|index| self.layers.get(index))
-            .is_some_and(|layer| layer.visible);
-        if dabs.is_empty() || !selected_visible {
+            .is_some_and(|layer| layer.visible && !layer.locked);
+        if dabs.is_empty() || !selected_editable {
             return false;
         }
         self.record_change();
@@ -837,7 +976,11 @@ impl Document {
         let Some(target_layer) = self.selected_layer else {
             return false;
         };
-        if !self.layers[target_layer].visible || !self.layers[source_layer].visible {
+        if !self.layers[target_layer].visible
+            || self.layers[target_layer].locked
+            || self.layers[target_layer].alpha_locked
+            || !self.layers[source_layer].visible
+        {
             return false;
         }
         let Some(object_index) = self.layers[source_layer]
@@ -1151,7 +1294,8 @@ impl Document {
     }
 
     pub fn replace_object_kinds(&mut self, replacements: &[(ObjectId, ObjectKind)]) -> bool {
-        if replacements.is_empty()
+        if self.selected_layer_is_locked()
+            || replacements.is_empty()
             || !replacements
                 .iter()
                 .any(|(id, kind)| self.object(*id).is_some_and(|object| object.kind != *kind))
@@ -1172,6 +1316,9 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return Vec::new();
         };
+        if self.layers[layer_index].locked || self.layers[layer_index].alpha_locked {
+            return Vec::new();
+        }
         let originals = self.layers[layer_index]
             .objects
             .iter()
@@ -1202,6 +1349,9 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return Vec::new();
         };
+        if self.layers[layer_index].locked || self.layers[layer_index].alpha_locked {
+            return Vec::new();
+        }
         if kinds.is_empty() {
             return Vec::new();
         }
@@ -1226,6 +1376,9 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return false;
         };
+        if self.layers[layer_index].locked || self.layers[layer_index].alpha_locked {
+            return false;
+        }
         if ids.is_empty()
             || !self.layers[layer_index]
                 .objects
@@ -1290,6 +1443,9 @@ impl Document {
         let Some((layer_index, object_index)) = self.find_object_index(id) else {
             return;
         };
+        if self.layers[layer_index].locked || self.layers[layer_index].alpha_locked {
+            return;
+        }
 
         self.record_change();
         self.layers[layer_index].objects.remove(object_index);
@@ -1325,7 +1481,7 @@ impl Document {
     fn can_erase_objects(&self, ids: &[ObjectId]) -> bool {
         self.selected_layer
             .and_then(|index| self.layers.get(index))
-            .filter(|layer| layer.visible)
+            .filter(|layer| layer.visible && !layer.locked && !layer.alpha_locked)
             .is_some_and(|layer| layer.objects.iter().any(|object| ids.contains(&object.id)))
     }
 
@@ -1333,7 +1489,10 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return false;
         };
-        if !self.layers[layer_index].visible {
+        if !self.layers[layer_index].visible
+            || self.layers[layer_index].locked
+            || self.layers[layer_index].alpha_locked
+        {
             return false;
         }
         let old_len = self.layers[layer_index].objects.len();
@@ -1351,7 +1510,12 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return false;
         };
-        if !self.layers[layer_index].visible || centers.is_empty() || radius <= 0.0 {
+        if !self.layers[layer_index].visible
+            || self.layers[layer_index].locked
+            || self.layers[layer_index].alpha_locked
+            || centers.is_empty()
+            || radius <= 0.0
+        {
             return false;
         }
 
@@ -1456,13 +1620,19 @@ impl Document {
                 height,
             }),
         };
-        self.layers[layer_index].paint.apply_dabs(dabs, clip);
+        let alpha_locked = self.layers[layer_index].alpha_locked;
+        self.layers[layer_index]
+            .paint
+            .apply_dabs(dabs, clip, alpha_locked);
     }
 
     fn edit_object(&mut self, id: ObjectId, edit: impl FnOnce(&mut DocumentObject)) {
         let Some((layer_index, object_index)) = self.find_object_index(id) else {
             return;
         };
+        if self.layers[layer_index].locked {
+            return;
+        }
 
         self.record_change();
         edit(&mut self.layers[layer_index].objects[object_index]);
@@ -1486,6 +1656,9 @@ impl Document {
         let Some(layer_index) = self.selected_layer else {
             return false;
         };
+        if self.layers[layer_index].locked {
+            return false;
+        }
         let objects = &self.layers[layer_index].objects;
         let can_move = if forward {
             (0..objects.len().saturating_sub(1)).any(|index| {

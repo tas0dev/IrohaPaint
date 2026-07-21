@@ -3,7 +3,7 @@ use std::fmt;
 use super::*;
 
 const MAGIC: &[u8; 8] = b"IROHAPNT";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_ITEMS: usize = 1_000_000;
 const MAX_STRING: usize = 1024 * 1024;
 
@@ -44,6 +44,9 @@ impl Document {
             writer.string(&layer.name);
             writer.bool(layer.visible);
             writer.bool(layer.clipped);
+            writer.bool(layer.locked);
+            writer.bool(layer.alpha_locked);
+            writer.f32(layer.opacity);
             writer.u64(layer.folder.map_or(0, |id| id.0));
             let tiles = layer.paint.tiles().collect::<Vec<_>>();
             writer.len(tiles.len());
@@ -69,7 +72,8 @@ impl Document {
         if reader.take(MAGIC.len())? != MAGIC {
             return Err(ProjectDecodeError("This is not an IrohaPaint project"));
         }
-        if reader.u32()? != VERSION {
+        let version = reader.u32()?;
+        if !matches!(version, 1 | VERSION) {
             return Err(ProjectDecodeError("This project version is not supported"));
         }
         let canvas_size = match reader.u8()? {
@@ -106,6 +110,13 @@ impl Document {
             let name = reader.string()?;
             let visible = reader.bool()?;
             let mut clipped = reader.bool()?;
+            let locked = version >= 2 && reader.bool()?;
+            let alpha_locked = version >= 2 && reader.bool()?;
+            let opacity = if version >= 2 {
+                reader.finite_f32()?.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
             if layer_index == 0 {
                 clipped = false;
             }
@@ -137,6 +148,9 @@ impl Document {
                 paint,
                 visible,
                 clipped,
+                locked,
+                alpha_locked,
+                opacity,
                 folder,
             });
         }

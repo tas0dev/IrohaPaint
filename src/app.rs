@@ -2,7 +2,7 @@ use viewkit::prelude::*;
 
 use crate::brush::BrushLibrary;
 use crate::canvas::{CanvasBindings, CanvasController, EditorCanvas};
-use crate::document::{Document, ObjectId};
+use crate::document::{Document, FolderId, ObjectId};
 use crate::editor::EditorTool;
 use crate::project;
 use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
@@ -20,6 +20,7 @@ pub struct IrohaPaint {
     document_settings: ModalState,
     brush_settings: ModalState,
     layer_name_settings: ModalState,
+    folder_name_settings: ModalState,
     brushes: State<BrushLibrary>,
     canvas_width: State<String>,
     canvas_height: State<String>,
@@ -27,6 +28,11 @@ pub struct IrohaPaint {
     brush_name: State<String>,
     brush_status: State<String>,
     layer_name: State<String>,
+    folder_name: State<String>,
+    editing_folder: State<Option<FolderId>>,
+    layer_opacity: State<f32>,
+    inspected_layer: State<Option<usize>>,
+    layer_scroll: ScrollState,
     stroke_color: State<Color>,
     fill_color: State<Color>,
     color_target: State<usize>,
@@ -56,6 +62,7 @@ impl App for IrohaPaint {
             document_settings: ModalState::new(),
             brush_settings: ModalState::new(),
             layer_name_settings: ModalState::new(),
+            folder_name_settings: ModalState::new(),
             brushes: State::new(BrushLibrary::default()),
             canvas_width: State::new(String::from("1200")),
             canvas_height: State::new(String::from("1200")),
@@ -63,6 +70,11 @@ impl App for IrohaPaint {
             brush_name: State::new(String::from("Custom Brush")),
             brush_status: State::new(String::new()),
             layer_name: State::new(String::new()),
+            folder_name: State::new(String::new()),
+            editing_folder: State::new(None),
+            layer_opacity: State::new(1.0),
+            inspected_layer: State::new(None),
+            layer_scroll: ScrollState::new(),
             stroke_color: State::new(Color::BLACK),
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
@@ -101,7 +113,6 @@ impl App for IrohaPaint {
                 self.document.clone(),
                 self.canvas.clone(),
                 self.export_status.clone(),
-                self.project_path.clone(),
                 self.file_menu.clone(),
                 self.edit_menu.clone(),
             ))
@@ -153,6 +164,13 @@ impl App for IrohaPaint {
                             inspected_object: self.inspected_object.clone(),
                             layer_name: self.layer_name.clone(),
                             layer_name_settings: self.layer_name_settings.clone(),
+                            folder_name: self.folder_name.clone(),
+                            editing_folder: self.editing_folder.clone(),
+                            folder_name_settings: self.folder_name_settings.clone(),
+                            layer_opacity: self.layer_opacity.clone(),
+                            inspected_layer: self.inspected_layer.clone(),
+                            project_path: self.project_path.clone(),
+                            layer_scroll: self.layer_scroll.clone(),
                         },
                     ))
                     .layout()
@@ -209,12 +227,23 @@ impl App for IrohaPaint {
             self.layer_name.clone(),
             self.layer_name_settings.clone(),
         );
+        let folder_name_settings = settings_dialog::folder_name_settings(
+            self.document.clone(),
+            self.folder_name.clone(),
+            self.editing_folder.clone(),
+            self.folder_name_settings.clone(),
+        );
         let content = ModalHost::new(content, document_settings, self.document_settings.clone());
         let content = ModalHost::new(content, brush_settings, self.brush_settings.clone());
-        Box::new(ModalHost::new(
+        let content = ModalHost::new(
             content,
             layer_name_settings,
             self.layer_name_settings.clone(),
+        );
+        Box::new(ModalHost::new(
+            content,
+            folder_name_settings,
+            self.folder_name_settings.clone(),
         ))
     }
 }

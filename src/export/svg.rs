@@ -82,9 +82,13 @@ pub fn serialize(document: &Document) -> Result<ExportedSvg, ExportError> {
             None
         };
         if let Some(id) = clip_id {
-            let _ = write!(source, r#"<g mask="url(#layer-clip-{id})">"#);
+            let _ = write!(
+                source,
+                r#"<g mask="url(#layer-clip-{id})" opacity="{:.3}">"#,
+                layer.opacity()
+            );
         } else {
-            source.push_str("<g>");
+            let _ = write!(source, r#"<g opacity="{:.3}">"#, layer.opacity());
         }
         write_layer_content(&mut source, layer, &mut mask_id)?;
         source.push_str("</g>");
@@ -103,6 +107,7 @@ pub(crate) fn serialize_layer(
     viewport: DocumentRect,
     previews: &[(ObjectId, &ObjectKind)],
     extra: Option<&ObjectKind>,
+    include_opacity: bool,
 ) -> Result<String, ExportError> {
     let Some(layer) = document.layers().get(layer_index) else {
         return Err(ExportError::EmptyDocument);
@@ -117,7 +122,11 @@ pub(crate) fn serialize_layer(
         height = viewport.height.max(0.1),
     );
     let mut mask_id = 1_u64;
-    source.push_str("<g>");
+    if include_opacity {
+        let _ = write!(source, r#"<g opacity="{:.3}">"#, layer.opacity());
+    } else {
+        source.push_str("<g>");
+    }
     write_paint_layer(&mut source, layer.paint())?;
     for object in layer.objects() {
         if let Some((_, kind)) = previews.iter().find(|(id, _)| *id == object.id()) {

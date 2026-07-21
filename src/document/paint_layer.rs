@@ -92,13 +92,18 @@ impl PaintLayer {
             .reduce(union)
     }
 
-    pub(super) fn apply_dabs(&mut self, dabs: &[PaintDab], clip: Option<DocumentRect>) {
+    pub(super) fn apply_dabs(
+        &mut self,
+        dabs: &[PaintDab],
+        clip: Option<DocumentRect>,
+        alpha_locked: bool,
+    ) {
         for dab in dabs {
-            self.apply_dab(*dab, clip);
+            self.apply_dab(*dab, clip, alpha_locked);
         }
     }
 
-    fn apply_dab(&mut self, dab: PaintDab, clip: Option<DocumentRect>) {
+    fn apply_dab(&mut self, dab: PaintDab, clip: Option<DocumentRect>, alpha_locked: bool) {
         let radius = dab.radius.max(0.05);
         let mut left = (dab.center.x - radius).floor() as i32;
         let mut top = (dab.center.y - radius).floor() as i32;
@@ -117,17 +122,31 @@ impl PaintLayer {
         let tile_size = PAINT_TILE_SIZE as i32;
         for tile_y in top.div_euclid(tile_size)..=(bottom - 1).div_euclid(tile_size) {
             for tile_x in left.div_euclid(tile_size)..=(right - 1).div_euclid(tile_size) {
-                let tile = self
-                    .tiles
-                    .entry((tile_x, tile_y))
-                    .or_insert_with(|| PaintTile::new(tile_x, tile_y));
-                blend_dab(tile, dab, left, top, right, bottom);
+                let tile = if alpha_locked {
+                    let Some(tile) = self.tiles.get_mut(&(tile_x, tile_y)) else {
+                        continue;
+                    };
+                    tile
+                } else {
+                    self.tiles
+                        .entry((tile_x, tile_y))
+                        .or_insert_with(|| PaintTile::new(tile_x, tile_y))
+                };
+                blend_dab(tile, dab, left, top, right, bottom, alpha_locked);
             }
         }
     }
 }
 
-fn blend_dab(tile: &mut PaintTile, dab: PaintDab, left: i32, top: i32, right: i32, bottom: i32) {
+fn blend_dab(
+    tile: &mut PaintTile,
+    dab: PaintDab,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    alpha_locked: bool,
+) {
     let tile_size = PAINT_TILE_SIZE as i32;
     let tile_left = tile.x * tile_size;
     let tile_top = tile.y * tile_size;
@@ -162,13 +181,35 @@ fn blend_dab(tile: &mut PaintTile, dab: PaintDab, left: i32, top: i32, right: i3
             let local_x = (document_x - tile_left) as usize;
             let local_y = (document_y - tile_top) as usize;
             let index = (local_y * PAINT_TILE_SIZE as usize + local_x) * 4;
-            blend_pixel(&mut tile.pixels[index..index + 4], dab.color, source_alpha);
+            if alpha_locked && tile.pixels[index + 3] == 0 {
+                continue;
+            }
+            blend_pixel(
+                &mut tile.pixels[index..index + 4],
+                dab.color,
+                source_alpha,
+                alpha_locked,
+            );
         }
     }
 }
 
-fn blend_pixel(destination: &mut [u8], color: DocumentColor, source_alpha: f32) {
+fn blend_pixel(
+    destination: &mut [u8],
+    color: DocumentColor,
+    source_alpha: f32,
+    preserve_alpha: bool,
+) {
     let destination_alpha = destination[3] as f32 / 255.0;
+    if preserve_alpha {
+        for (channel, source) in [color.red, color.green, color.blue].into_iter().enumerate() {
+            let destination_color = destination[channel] as f32 / 255.0;
+            let source_color = source as f32 / 255.0;
+            let output = source_color * source_alpha + destination_color * (1.0 - source_alpha);
+            destination[channel] = (output * 255.0).round() as u8;
+        }
+        return;
+    }
     let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
     if output_alpha <= f32::EPSILON {
         destination.fill(0);

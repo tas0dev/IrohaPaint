@@ -49,7 +49,7 @@ pub use context_menu::ContextMenu;
 pub use ellipse::{Ellipse, EllipseColor};
 pub use icon::{Icon, IconName};
 pub use image::{Image, ImageContentMode};
-pub use list::ListRow;
+pub use list::{ListDragDropState, ListRow};
 pub use menu::{Menu, MenuItem};
 pub use modal::{ModalHost, ModalState};
 pub use radio::RadioButton;

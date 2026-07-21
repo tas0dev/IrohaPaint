@@ -88,6 +88,14 @@ pub(crate) fn serialize_layer_content_for_canvas(
     viewport: DocumentRect,
     previews: &[(ObjectId, &ObjectKind)],
     extra: Option<&ObjectKind>,
+    include_opacity: bool,
 ) -> Result<String, ExportError> {
-    svg::serialize_layer(document, layer_index, viewport, previews, extra)
+    svg::serialize_layer(
+        document,
+        layer_index,
+        viewport,
+        previews,
+        extra,
+        include_opacity,
+    )
 }

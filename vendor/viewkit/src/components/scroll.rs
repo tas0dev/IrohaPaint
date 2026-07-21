@@ -166,6 +166,7 @@ pub struct Scroll {
     axis: ScrollAxis,
     scrollbar_visibility: ScrollBarVisibility,
     content: Option<StackChild>,
+    intrinsic_cross_axis: bool,
 }
 
 impl Scroll {
@@ -175,6 +176,7 @@ impl Scroll {
             axis: ScrollAxis::Vertical,
             scrollbar_visibility: ScrollBarVisibility::Automatic,
             content: None,
+            intrinsic_cross_axis: false,
         }
     }
 
@@ -196,6 +198,14 @@ impl Scroll {
     {
         self.content = Some(content.into_stack_child());
 
+        self
+    }
+
+    /// Measures the non-scrolling axis from the content instead of greedily
+    /// taking all available space. This is useful for a vertical scroll view
+    /// placed in a horizontal application layout, such as an inspector panel.
+    pub fn intrinsic_cross_axis(mut self, intrinsic: bool) -> Self {
+        self.intrinsic_cross_axis = intrinsic;
         self
     }
 
@@ -375,7 +385,7 @@ impl Scroll {
 }
 
 impl View for Scroll {
-    fn measure(&self, constraints: Constraints, _context: &mut MeasureContext<'_>) -> Size {
+    fn measure(&self, constraints: Constraints, context: &mut MeasureContext<'_>) -> Size {
         let width = if constraints.maximum.width.is_finite() {
             constraints.maximum.width
         } else {
@@ -388,7 +398,23 @@ impl View for Scroll {
             constraints.minimum.height
         };
 
-        constraints.constrain(Size::new(width.max(0.0), height.max(0.0)))
+        if !self.intrinsic_cross_axis {
+            return constraints.constrain(Size::new(width.max(0.0), height.max(0.0)));
+        }
+        let measured = self.content.as_ref().map_or(Size::ZERO, |content| {
+            let maximum = match self.axis {
+                ScrollAxis::Vertical => Size::new(constraints.maximum.width, f32::INFINITY),
+                ScrollAxis::Horizontal => Size::new(f32::INFINITY, constraints.maximum.height),
+                ScrollAxis::Both => Size::new(f32::INFINITY, f32::INFINITY),
+            };
+            content.measure(Constraints::loose(maximum), context)
+        });
+        let size = match self.axis {
+            ScrollAxis::Vertical => Size::new(measured.width, height),
+            ScrollAxis::Horizontal => Size::new(width, measured.height),
+            ScrollAxis::Both => measured,
+        };
+        constraints.constrain(size)
     }
 
     fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>) {

@@ -69,6 +69,30 @@ impl EditorCanvas {
             drawing_bounds.is_none_or(|drawing_bounds| drawing_bounds.contains(document_point));
 
         let active_tool = self.active_tool.get();
+        let (layer_locked, alpha_locked) = {
+            let document = self.document.get();
+            (
+                document.selected_layer_is_locked(),
+                document.selected_layer_is_alpha_locked(),
+            )
+        };
+        if layer_locked && active_tool != EditorTool::Select {
+            return;
+        }
+        if alpha_locked
+            && matches!(
+                active_tool,
+                EditorTool::Rectangle
+                    | EditorTool::Ellipse
+                    | EditorTool::Pencil
+                    | EditorTool::Fill
+                    | EditorTool::Eraser
+                    | EditorTool::BlobBrush
+                    | EditorTool::Pen
+            )
+        {
+            return;
+        }
         if !matches!(active_tool, EditorTool::Select | EditorTool::NodeEdit) {
             self.controller.get_mut().selected_objects.clear();
         }
@@ -88,7 +112,7 @@ impl EditorCanvas {
                             .map(|object| (*id, object.kind().clone()))
                     })
                     .collect::<Vec<_>>();
-                if let Some(selection_bounds) = kinds_bounds(&originals) {
+                if !layer_locked && let Some(selection_bounds) = kinds_bounds(&originals) {
                     if let Some(handle) =
                         resize_handle_at(selection_bounds, document_point, tolerance)
                     {
@@ -153,10 +177,14 @@ impl EditorCanvas {
                         .update(|document| document.select_object(Some(id)));
                     let mut state = self.controller.get_mut();
                     state.selected_objects = selected;
-                    state.interaction = Interaction::MovingObjects {
-                        originals,
-                        start: document_point,
-                        current: document_point,
+                    state.interaction = if layer_locked {
+                        Interaction::Idle
+                    } else {
+                        Interaction::MovingObjects {
+                            originals,
+                            start: document_point,
+                            current: document_point,
+                        }
                     };
                     return;
                 }

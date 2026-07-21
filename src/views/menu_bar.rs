@@ -17,16 +17,11 @@ pub fn view(
     document: State<Document>,
     canvas: CanvasController,
     export_status: State<String>,
-    project_path: State<Option<PathBuf>>,
     file_menu: PopupMenuState,
     edit_menu: PopupMenuState,
 ) -> impl View + 'static {
     let current_document = document.get();
     let status = export_status.get();
-    let mut project_name = project::display_name(project_path.get().as_deref());
-    if current_document.is_modified() {
-        project_name.push('*');
-    }
     Padding::symmetric(8.0, 6.0).content(
         HStack::new()
             .alignment(StackAlignment::Center)
@@ -56,7 +51,6 @@ pub fn view(
                         canvas.clear_selection();
                     }),
             )
-            .child(Text::new(project_name))
             .child(Text::new(status)),
     )
 }

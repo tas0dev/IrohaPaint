@@ -163,18 +163,22 @@ pub fn paint_editor_canvas(
                 continue;
             }
         }
-        paint_raster_layer(layer.paint(), transform, bounds, context);
+        paint_raster_layer(layer.paint(), layer.opacity(), transform, bounds, context);
         for object in layer.objects() {
             if let Some(preview) = interaction.preview_kind(object.id()) {
-                paint_kind(&preview, transform, bounds, context);
+                paint_kind(&preview, layer.opacity(), transform, bounds, context);
             } else {
-                paint_kind(object.kind(), transform, bounds, context);
+                paint_kind(object.kind(), layer.opacity(), transform, bounds, context);
             }
         }
     }
 
     if !serialized_draft {
-        paint_draft(interaction, transform, bounds, context);
+        let opacity = document
+            .selected_layer()
+            .and_then(|index| document.layers().get(index))
+            .map_or(1.0, |layer| layer.opacity());
+        paint_draft(interaction, opacity, transform, bounds, context);
     }
 
     if let Some((position, width)) = nodes.brush_cursor {
@@ -302,6 +306,7 @@ fn paint_clipped_layer(
         viewport,
         previews,
         extra,
+        true,
     ) {
         Ok(source) => source,
         Err(_) => return false,
@@ -312,6 +317,7 @@ fn paint_clipped_layer(
         viewport,
         &[],
         None,
+        false,
     ) {
         Ok(source) => source,
         Err(_) => return false,
@@ -372,6 +378,7 @@ fn rasterize_svg(source: &str, width: u32, height: u32) -> Option<tiny_skia::Pix
 
 fn paint_raster_layer(
     layer: &PaintLayer,
+    opacity: f32,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -388,7 +395,7 @@ fn paint_raster_layer(
             command: ImageCommand {
                 image,
                 bounds: transform.document_rect_to_canvas(tile.document_bounds(), canvas_bounds),
-                opacity: 1.0,
+                opacity,
                 sampling: ImageSampling::Bilinear,
             },
         });
@@ -397,6 +404,7 @@ fn paint_raster_layer(
 
 fn paint_kind(
     kind: &ObjectKind,
+    opacity: f32,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -407,12 +415,12 @@ fn paint_kind(
             if style.fill.alpha > 0 {
                 context.display_list.push(DrawCommand::FillRect {
                     rect,
-                    color: view_color(style.fill),
+                    color: view_color_with_opacity(style.fill, opacity),
                 });
             }
             context.display_list.push(DrawCommand::StrokeRect {
                 rect,
-                color: view_color(style.stroke.color),
+                color: view_color_with_opacity(style.stroke.color, opacity),
                 width: style.stroke.width * transform.zoom(),
             });
         }
@@ -421,12 +429,12 @@ fn paint_kind(
             if style.fill.alpha > 0 {
                 context.display_list.push(DrawCommand::FillEllipse {
                     rect,
-                    color: view_color(style.fill),
+                    color: view_color_with_opacity(style.fill, opacity),
                 });
             }
             context.display_list.push(DrawCommand::StrokeEllipse {
                 rect,
-                color: view_color(style.stroke.color),
+                color: view_color_with_opacity(style.stroke.color, opacity),
                 width: style.stroke.width * transform.zoom(),
             });
         }
@@ -452,11 +460,27 @@ fn paint_kind(
                         canvas_bounds,
                         context,
                         cutouts,
+                        opacity,
                     );
                 }
-                paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
+                paint_variable_stroke(
+                    path,
+                    style.stroke,
+                    opacity,
+                    transform,
+                    canvas_bounds,
+                    context,
+                );
             } else {
-                paint_svg_path(path, *style, transform, canvas_bounds, context, cutouts);
+                paint_svg_path(
+                    path,
+                    *style,
+                    transform,
+                    canvas_bounds,
+                    context,
+                    cutouts,
+                    opacity,
+                );
             }
         }
     }
@@ -465,6 +489,7 @@ fn paint_kind(
 fn paint_variable_stroke(
     path: &BezierPath,
     stroke: StrokeStyle,
+    opacity: f32,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -505,7 +530,7 @@ fn paint_variable_stroke(
         command: SvgCommand {
             svg,
             bounds: svg_bounds,
-            opacity: 1.0,
+            opacity,
             tint: None,
         },
     });
@@ -561,6 +586,7 @@ fn paint_svg_path(
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
     cutouts: &[BezierPath],
+    opacity: f32,
 ) {
     if path.nodes().len() < 2 || canvas_bounds.is_empty() {
         return;
@@ -656,7 +682,7 @@ fn paint_svg_path(
         command: SvgCommand {
             svg,
             bounds: svg_bounds,
-            opacity: 1.0,
+            opacity,
             tint: None,
         },
     });
@@ -664,6 +690,11 @@ fn paint_svg_path(
 
 fn view_color(color: DocumentColor) -> viewkit::prelude::Color {
     viewkit::prelude::Color::rgba(color.red, color.green, color.blue, color.alpha)
+}
+
+fn view_color_with_opacity(color: DocumentColor, opacity: f32) -> viewkit::prelude::Color {
+    let alpha = (color.alpha as f32 * opacity.clamp(0.0, 1.0)).round() as u8;
+    viewkit::prelude::Color::rgba(color.red, color.green, color.blue, alpha)
 }
 
 fn paint_svg_commands(
@@ -697,6 +728,7 @@ fn paint_svg_commands(
 
 fn paint_draft(
     interaction: &Interaction,
+    opacity: f32,
     transform: CanvasTransform,
     canvas_bounds: Rect,
     context: &mut PaintContext<'_>,
@@ -719,7 +751,7 @@ fn paint_draft(
                     style: *style,
                 },
             };
-            paint_kind(&kind, transform, canvas_bounds, context);
+            paint_kind(&kind, opacity, transform, canvas_bounds, context);
             paint_selection(bounds, transform, canvas_bounds, false, context);
         }
         Interaction::DrawingPencil {
@@ -730,6 +762,7 @@ fn paint_draft(
             paint_variable_stroke(
                 path,
                 brush.stroke_style(),
+                opacity,
                 transform,
                 canvas_bounds,
                 context,
@@ -740,7 +773,14 @@ fn paint_draft(
             style,
             ..
         } => {
-            paint_variable_stroke(path, style.stroke, transform, canvas_bounds, context);
+            paint_variable_stroke(
+                path,
+                style.stroke,
+                opacity,
+                transform,
+                canvas_bounds,
+                context,
+            );
         }
         Interaction::PlacingPathNode {
             path_id: _none,

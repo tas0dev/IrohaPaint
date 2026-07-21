@@ -41,6 +41,10 @@ my @icons = (
 	'check',
 	'x',
 	'refresh-cw',
+	'lock',
+	'grid-2x2-check',
+	'folder',
+	'folder-open',
 );
 
 make_path($output_dir);
