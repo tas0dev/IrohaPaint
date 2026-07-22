@@ -818,8 +818,6 @@ pub fn view(
                 VStack::new()
                     .alignment(StackAlignment::Stretch)
                     .gap(StackGap::Medium)
-                    .child(palette_tab("Layers"))
-                    .child(Divider::new())
                     .child(layer_panel.layout().flex_grow(1.0))
                     .child(Divider::new())
                     .child(Text::new(project_name).into_stack_child().flex_shrink(0.0)),

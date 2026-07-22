@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use viewkit::prelude::*;
 
+use super::icon_button;
 use crate::document::{CanvasSize, Document};
 use crate::editor::EditorTool;
 use crate::export;
@@ -19,6 +20,7 @@ pub fn view(
     export_status: State<String>,
     file_menu: PopupMenuState,
     edit_menu: PopupMenuState,
+    view_menu: PopupMenuState,
 ) -> impl View + 'static {
     let current_document = document.get();
     let status = export_status.get();
@@ -28,10 +30,11 @@ pub fn view(
             .gap(StackGap::Small)
             .child(PopupMenuButton::new("File", file_menu).style(ButtonStyle::Ghost))
             .child(PopupMenuButton::new("Edit", edit_menu).style(ButtonStyle::Ghost))
-            .child(Button::new("View").style(ButtonStyle::Ghost))
+            .child(PopupMenuButton::new("View", view_menu).style(ButtonStyle::Ghost))
+            .child(Text::new(status))
+            .child(Spacer::new())
             .child(
-                Button::new("Undo")
-                    .style(ButtonStyle::Ghost)
+                icon_button::view("undo-2")
                     .enabled(current_document.can_undo())
                     .on_click({
                         let document = document.clone();
@@ -43,16 +46,62 @@ pub fn view(
                     }),
             )
             .child(
-                Button::new("Redo")
-                    .style(ButtonStyle::Ghost)
+                icon_button::view("redo-2")
                     .enabled(current_document.can_redo())
                     .on_click(move || {
                         document.update(Document::redo);
                         canvas.clear_selection();
                     }),
-            )
-            .child(Text::new(status)),
+            ),
     )
+}
+
+pub fn view_menu(
+    document: State<Document>,
+    canvas: CanvasController,
+    right_palette_tab: State<usize>,
+    view_revision: State<u64>,
+) -> Menu {
+    let flipped = canvas.is_view_flipped();
+    Menu::new()
+        .item(MenuItem::new("Navigator").on_select({
+            let right_palette_tab = right_palette_tab.clone();
+            move || right_palette_tab.set(0)
+        }))
+        .item(MenuItem::new("Layers").on_select({
+            let right_palette_tab = right_palette_tab.clone();
+            move || right_palette_tab.set(1)
+        }))
+        .separator()
+        .item(MenuItem::new("Fit Canvas").on_select({
+            let document = document.clone();
+            let canvas = canvas.clone();
+            let view_revision = view_revision.clone();
+            move || {
+                canvas.fit_canvas(&document.get());
+                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            }
+        }))
+        .item(MenuItem::new("Zoom to 100%").on_select({
+            let canvas = canvas.clone();
+            let view_revision = view_revision.clone();
+            move || {
+                canvas.set_zoom(1.0);
+                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            }
+        }))
+        .separator()
+        .item(
+            MenuItem::new(if flipped {
+                "Reset Horizontal Flip"
+            } else {
+                "Flip Canvas Horizontally"
+            })
+            .on_select(move || {
+                canvas.toggle_view_flip();
+                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            }),
+        )
 }
 
 pub fn edit_menu(

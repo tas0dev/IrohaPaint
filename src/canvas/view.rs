@@ -511,10 +511,10 @@ impl EditorCanvas {
             start_pan,
         } = state.interaction
         {
-            state.transform.set_pan(Point::new(
-                start_pan.x + position.x - start_canvas.x,
-                start_pan.y + position.y - start_canvas.y,
-            ));
+            state.transform.set_pan(start_pan);
+            state
+                .transform
+                .pan_by_canvas_delta(position.x - start_canvas.x, position.y - start_canvas.y);
             return true;
         }
 
@@ -1095,6 +1095,7 @@ impl View for EditorCanvas {
     }
 
     fn paint(&self, bounds: Rect, context: &mut PaintContext<'_>) {
+        self.controller.get_mut().viewport_bounds = bounds;
         self.initialize_transform(bounds);
         let document = self.document.get();
         let state = self.controller.get();
@@ -1195,8 +1196,7 @@ impl View for EditorCanvas {
             } if bounds.contains(*position) => {
                 let mut state = self.controller.get_mut();
                 state.transform.zoom_at(*position, bounds, *delta_y);
-                let pan = state.transform.pan();
-                state.transform.set_pan(Point::new(pan.x - delta_x, pan.y));
+                state.transform.pan_by_canvas_delta(-delta_x, 0.0);
                 drop(state);
                 context.request_redraw_in(bounds);
                 EventResult::Consumed

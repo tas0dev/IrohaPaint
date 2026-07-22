@@ -4,9 +4,11 @@ use std::rc::Rc;
 use super::coordinates::CanvasTransform;
 use super::hit_test::SegmentHit;
 use super::interaction::Interaction;
-use crate::document::{Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind};
+use crate::document::{
+    CanvasSize, Document, DocumentPoint, DocumentRect, NodeComponent, ObjectId, ObjectKind,
+};
 use viewkit::platform::KeyModifiers;
-use viewkit::prelude::{ImageData, Point};
+use viewkit::prelude::{ImageData, Point, Rect};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ReferenceImage {
@@ -24,6 +26,7 @@ pub struct CanvasController {
 pub(crate) struct CanvasState {
     pub transform: CanvasTransform,
     pub transform_initialized: bool,
+    pub viewport_bounds: Rect,
     pub interaction: Interaction,
     pub active_pen_path: Option<ObjectId>,
     pub selected_objects: Vec<ObjectId>,
@@ -77,6 +80,44 @@ impl CanvasController {
 
     pub fn has_reference_image(&self) -> bool {
         self.state.borrow().reference_image.is_some()
+    }
+
+    pub fn is_view_flipped(&self) -> bool {
+        self.state.borrow().transform.is_flipped_horizontal()
+    }
+
+    pub fn set_zoom(&self, zoom: f32) {
+        let mut state = self.state.borrow_mut();
+        let bounds = state.viewport_bounds;
+        if bounds.is_empty() {
+            return;
+        }
+        let center = Point::new(
+            bounds.origin.x + bounds.size.width * 0.5,
+            bounds.origin.y + bounds.size.height * 0.5,
+        );
+        state.transform.set_zoom_at(zoom, center, bounds);
+    }
+
+    pub fn fit_canvas(&self, document: &Document) -> bool {
+        let CanvasSize::Custom { width, height } = document.properties().canvas_size else {
+            return false;
+        };
+        let mut state = self.state.borrow_mut();
+        let bounds = state.viewport_bounds;
+        let fitted = state.transform.fit_canvas(width, height, bounds);
+        state.transform_initialized |= fitted;
+        fitted
+    }
+
+    pub fn toggle_view_flip(&self) {
+        self.state.borrow_mut().transform.toggle_horizontal_flip();
+    }
+
+    pub(crate) fn center_on_document(&self, point: DocumentPoint) {
+        let mut state = self.state.borrow_mut();
+        let bounds = state.viewport_bounds;
+        state.transform.center_on(point, bounds);
     }
 
     pub fn reset_for_document(&self) {

@@ -5,7 +5,7 @@ use crate::canvas::{CanvasBindings, CanvasController, EditorCanvas};
 use crate::document::{Document, FolderId, ObjectId};
 use crate::editor::EditorTool;
 use crate::project;
-use crate::views::{inspector, menu_bar, settings_dialog, tool_bar};
+use crate::views::{inspector, menu_bar, navigator, settings_dialog, tool_bar};
 use std::path::PathBuf;
 
 pub struct IrohaPaint {
@@ -16,6 +16,7 @@ pub struct IrohaPaint {
     project_path: State<Option<PathBuf>>,
     file_menu: PopupMenuState,
     edit_menu: PopupMenuState,
+    view_menu: PopupMenuState,
     pen_menu: PopupMenuState,
     document_settings: ModalState,
     brush_settings: ModalState,
@@ -34,6 +35,8 @@ pub struct IrohaPaint {
     inspected_layer: State<Option<usize>>,
     layer_scroll: ScrollState,
     property_scroll: ScrollState,
+    right_palette_tab: State<usize>,
+    view_revision: State<u64>,
     stroke_color: State<Color>,
     fill_color: State<Color>,
     color_target: State<usize>,
@@ -59,6 +62,7 @@ impl App for IrohaPaint {
             project_path: State::new(None),
             file_menu: PopupMenuState::new(),
             edit_menu: PopupMenuState::new(),
+            view_menu: PopupMenuState::new(),
             pen_menu: PopupMenuState::new(),
             document_settings: ModalState::new(),
             brush_settings: ModalState::new(),
@@ -77,6 +81,8 @@ impl App for IrohaPaint {
             inspected_layer: State::new(None),
             layer_scroll: ScrollState::new(),
             property_scroll: ScrollState::new(),
+            right_palette_tab: State::new(1),
+            view_revision: State::new(0),
             stroke_color: State::new(Color::BLACK),
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
@@ -108,6 +114,7 @@ impl App for IrohaPaint {
     }
 
     fn body(&self, _context: &ViewContext) -> Box<dyn View + 'static> {
+        let _view_revision = self.view_revision.get();
         let inspector_bindings = || inspector::InspectorBindings {
             stroke_color: self.stroke_color.clone(),
             fill_color: self.fill_color.clone(),
@@ -131,6 +138,37 @@ impl App for IrohaPaint {
             layer_scroll: self.layer_scroll.clone(),
             property_scroll: self.property_scroll.clone(),
         };
+        let right_panel: Box<dyn View> = if self.right_palette_tab.get() == 0 {
+            Box::new(Padding::all(12.0).content(navigator::view(
+                self.document.clone(),
+                self.canvas.clone(),
+                self.view_revision.clone(),
+            )))
+        } else {
+            Box::new(inspector::view(
+                self.document.clone(),
+                self.canvas.clone(),
+                self.brushes.clone(),
+                self.active_tool.clone(),
+                inspector_bindings(),
+                inspector::InspectorPalette::Layers,
+            ))
+        };
+        let right_dock = VStack::new()
+            .alignment(StackAlignment::Stretch)
+            .gap(StackGap::None)
+            .child(
+                Padding::symmetric(12.0, 8.0)
+                    .content(
+                        SegmentedControl::new(self.right_palette_tab.binding())
+                            .item(0, "Navigator")
+                            .item(1, "Layers"),
+                    )
+                    .into_stack_child()
+                    .flex_shrink(0.0),
+            )
+            .child(Divider::new())
+            .child(right_panel.layout().height(0.0).flex_grow(1.0));
         let content = VStack::new()
             .alignment(StackAlignment::Stretch)
             .gap(StackGap::None)
@@ -141,6 +179,7 @@ impl App for IrohaPaint {
                     self.export_status.clone(),
                     self.file_menu.clone(),
                     self.edit_menu.clone(),
+                    self.view_menu.clone(),
                 )
                 .into_stack_child()
                 .flex_shrink(0.0),
@@ -190,19 +229,7 @@ impl App for IrohaPaint {
                         .flex_grow(1.0),
                     )
                     .child(Divider::new())
-                    .child(
-                        inspector::view(
-                            self.document.clone(),
-                            self.canvas.clone(),
-                            self.brushes.clone(),
-                            self.active_tool.clone(),
-                            inspector_bindings(),
-                            inspector::InspectorPalette::Layers,
-                        )
-                        .layout()
-                        .width(248.0)
-                        .flex_shrink(0.0),
-                    )
+                    .child(right_dock.layout().width(248.0).flex_shrink(0.0))
                     .layout()
                     .height(0.0)
                     .flex_grow(1.0),
@@ -233,8 +260,15 @@ impl App for IrohaPaint {
             self.canvas.clone(),
             self.active_tool.clone(),
         );
+        let view_menu = menu_bar::view_menu(
+            self.document.clone(),
+            self.canvas.clone(),
+            self.right_palette_tab.clone(),
+            self.view_revision.clone(),
+        );
         let content = PopupMenuHost::new(content, pen_menu, self.pen_menu.clone());
         let content = PopupMenuHost::new(content, edit_menu, self.edit_menu.clone());
+        let content = PopupMenuHost::new(content, view_menu, self.view_menu.clone());
         let content = PopupMenuHost::new(content, menu, self.file_menu.clone());
         let document_settings = settings_dialog::document_settings(
             self.document.clone(),
