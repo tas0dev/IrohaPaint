@@ -16,6 +16,8 @@ pub use crate::layout::{
     StackGap, ViewExt,
 };
 pub use crate::platform::CursorIcon;
+#[cfg(target_os = "android")]
+pub use crate::runtime::run_android;
 pub use crate::runtime::{ViewKitError, run};
 pub use crate::state::{Binding, State};
 pub use crate::svg::{SvgData, SvgError};

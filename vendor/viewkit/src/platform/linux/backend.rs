@@ -24,6 +24,9 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::CursorIcon as WinitCursorIcon;
 use winit::window::{Fullscreen, Window, WindowId};
 
+#[cfg(target_os = "android")]
+use winit::platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp};
+
 const LINE_SCROLL_PIXELS: f32 = 40.0;
 
 const BACK_MOUSE_BUTTON_ID: u16 = 4;
@@ -138,6 +141,23 @@ where
         Ok(())
     }
 
+    #[cfg(target_os = "android")]
+    pub fn run_android(mut self, app: AndroidApp) -> Result<(), DesktopBackendError> {
+        let mut event_loop_builder = EventLoop::builder();
+        event_loop_builder.with_android_app(app);
+        let event_loop = event_loop_builder.build()?;
+
+        event_loop.set_control_flow(ControlFlow::Wait);
+        self.context = Some(Context::new(event_loop.owned_display_handle())?);
+
+        let result = event_loop.run_app(&mut self);
+        if let Some(error) = self.runtime_error.take() {
+            return Err(error);
+        }
+        result?;
+        Ok(())
+    }
+
     fn emit(&mut self, event: PlatformEvent) {
         let Some(window) = self.window.as_ref() else {
             return;
@@ -209,6 +229,17 @@ impl<A> ApplicationHandler for DesktopBackend<A>
 where
     A: PlatformApplication,
 {
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "android")]
+        {
+            // Android destroys the native surface while the Activity is suspended.
+            // Drop the surface before the Window and rebuild both on resume.
+            self.renderer = None;
+            self.window = None;
+            self.pending_pointer_move = None;
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() || self.runtime_error.is_some() {
             return;
@@ -394,7 +425,11 @@ where
                     },
                     x,
                     y,
-                    pressure,
+                    pressure: if cfg!(target_os = "android") {
+                        None
+                    } else {
+                        pressure
+                    },
                 });
             }
 

@@ -113,8 +113,9 @@ impl App for IrohaPaint {
         }
     }
 
-    fn body(&self, _context: &ViewContext) -> Box<dyn View + 'static> {
+    fn body(&self, context: &ViewContext) -> Box<dyn View + 'static> {
         let _view_revision = self.view_revision.get();
+        let compact_layout = context.size().width < 900.0;
         let inspector_bindings = || inspector::InspectorBindings {
             stroke_color: self.stroke_color.clone(),
             fill_color: self.fill_color.clone(),
@@ -169,23 +170,39 @@ impl App for IrohaPaint {
             )
             .child(Divider::new())
             .child(right_panel.layout().height(0.0).flex_grow(1.0));
-        let content = VStack::new()
-            .alignment(StackAlignment::Stretch)
-            .gap(StackGap::None)
-            .child(
-                menu_bar::view(
-                    self.document.clone(),
-                    self.canvas.clone(),
-                    self.export_status.clone(),
-                    self.file_menu.clone(),
-                    self.edit_menu.clone(),
-                    self.view_menu.clone(),
-                )
-                .into_stack_child()
-                .flex_shrink(0.0),
+        let work_area: Box<dyn View> = if compact_layout {
+            Box::new(
+                HStack::new()
+                    .alignment(StackAlignment::Stretch)
+                    .gap(StackGap::None)
+                    .child(
+                        tool_bar::view(self.active_tool.clone(), self.pen_menu.clone())
+                            .into_stack_child()
+                            .flex_shrink(0.0),
+                    )
+                    .child(Divider::new())
+                    .child(
+                        EditorCanvas::new(
+                            self.document.clone(),
+                            self.active_tool.clone(),
+                            self.canvas.clone(),
+                            self.brushes.clone(),
+                            CanvasBindings {
+                                fill_color: self.fill_color.clone(),
+                                blob_width: self.blob_width.clone(),
+                                paint_size: self.paint_size.clone(),
+                                paint_opacity: self.paint_opacity.clone(),
+                                paint_softness: self.paint_softness.clone(),
+                                eraser_mode: self.eraser_mode.clone(),
+                            },
+                        )
+                        .layout()
+                        .width(0.0)
+                        .flex_grow(1.0),
+                    ),
             )
-            .child(Divider::new())
-            .child(
+        } else {
+            Box::new(
                 HStack::new()
                     .alignment(StackAlignment::Stretch)
                     .gap(StackGap::None)
@@ -229,11 +246,26 @@ impl App for IrohaPaint {
                         .flex_grow(1.0),
                     )
                     .child(Divider::new())
-                    .child(right_dock.layout().width(248.0).flex_shrink(0.0))
-                    .layout()
-                    .height(0.0)
-                    .flex_grow(1.0),
-            );
+                    .child(right_dock.layout().width(248.0).flex_shrink(0.0)),
+            )
+        };
+        let content = VStack::new()
+            .alignment(StackAlignment::Stretch)
+            .gap(StackGap::None)
+            .child(
+                menu_bar::view(
+                    self.document.clone(),
+                    self.canvas.clone(),
+                    self.export_status.clone(),
+                    self.file_menu.clone(),
+                    self.edit_menu.clone(),
+                    self.view_menu.clone(),
+                )
+                .into_stack_child()
+                .flex_shrink(0.0),
+            )
+            .child(Divider::new())
+            .child(work_area.layout().height(0.0).flex_grow(1.0));
         let menu = menu_bar::file_menu(
             self.document.clone(),
             self.canvas.clone(),

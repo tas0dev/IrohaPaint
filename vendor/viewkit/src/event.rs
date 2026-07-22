@@ -256,6 +256,7 @@ impl<'a> EventContext<'a> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EventDispatcher {
     pointer_position: Option<Point>,
+    emulated_touch: Option<u64>,
 }
 
 impl EventDispatcher {
@@ -274,6 +275,25 @@ impl EventDispatcher {
         event: &PlatformEvent,
         context: &mut EventContext<'_>,
     ) -> EventResult {
+        if let PlatformEvent::Touch {
+            id,
+            phase,
+            x,
+            y,
+            pressure,
+        } = event
+        {
+            return self.dispatch_touch(
+                root,
+                bounds,
+                *id,
+                *phase,
+                Point::new(*x, *y),
+                pressure.map(|pressure| pressure.clamp(0.0, 1.0)),
+                context,
+            );
+        }
+
         let mut result = EventResult::Ignored;
 
         let is_primary_press = matches!(
@@ -299,6 +319,71 @@ impl EventDispatcher {
         };
 
         result.merge(root.handle_event(bounds, &view_event, context))
+    }
+
+    fn dispatch_touch(
+        &mut self,
+        root: &dyn View,
+        bounds: Rect,
+        id: u64,
+        phase: TouchPhase,
+        position: Point,
+        pressure: Option<f32>,
+        context: &mut EventContext<'_>,
+    ) -> EventResult {
+        let touch_result = root.handle_event(
+            bounds,
+            &ViewEvent::Touch {
+                id,
+                phase,
+                position,
+                pressure,
+            },
+            context,
+        );
+        match phase {
+            TouchPhase::Started if !touch_result.is_consumed() && self.emulated_touch.is_none() => {
+                self.emulated_touch = Some(id);
+                self.pointer_position = Some(position);
+                let moved =
+                    root.handle_event(bounds, &ViewEvent::PointerMoved { position }, context);
+                let focused = root.handle_event(
+                    bounds,
+                    &ViewEvent::PointerFocusRequested { position },
+                    context,
+                );
+                let pressed = root.handle_event(
+                    bounds,
+                    &ViewEvent::PointerPressed {
+                        position,
+                        button: PointerButton::Primary,
+                    },
+                    context,
+                );
+                touch_result.merge(moved).merge(focused).merge(pressed)
+            }
+            TouchPhase::Moved if self.emulated_touch == Some(id) => {
+                self.pointer_position = Some(position);
+                touch_result.merge(root.handle_event(
+                    bounds,
+                    &ViewEvent::PointerMoved { position },
+                    context,
+                ))
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled if self.emulated_touch == Some(id) => {
+                self.pointer_position = Some(position);
+                self.emulated_touch = None;
+                touch_result.merge(root.handle_event(
+                    bounds,
+                    &ViewEvent::PointerReleased {
+                        position,
+                        button: PointerButton::Primary,
+                    },
+                    context,
+                ))
+            }
+            _ => touch_result,
+        }
     }
 
     fn convert_event(&mut self, event: &PlatformEvent) -> Option<ViewEvent> {
@@ -335,6 +420,7 @@ impl EventDispatcher {
 
             PlatformEvent::PointerLeft => {
                 self.pointer_position = None;
+                self.emulated_touch = None;
 
                 Some(ViewEvent::PointerLeft)
             }
@@ -365,6 +451,7 @@ impl EventDispatcher {
             PlatformEvent::Focused(focused) => {
                 if !focused {
                     self.pointer_position = None;
+                    self.emulated_touch = None;
                 }
 
                 Some(ViewEvent::FocusChanged { focused: *focused })

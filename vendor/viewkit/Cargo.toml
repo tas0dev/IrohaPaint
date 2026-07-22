@@ -138,6 +138,14 @@ version = "0.30.13"
 features = ["rwh_06"]
 default-features = false
 
+[target.'cfg(target_os = "android")'.dependencies.winit]
+version = "0.30.13"
+features = [
+    "android-native-activity",
+    "rwh_06",
+]
+default-features = false
+
 [target.'cfg(target_os = "macos")'.dependencies.winit]
 version = "0.30.13"
 features = ["rwh_06"]

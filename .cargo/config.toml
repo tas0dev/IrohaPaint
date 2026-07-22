@@ -1,0 +1,3 @@
+[alias]
+android-apk = "apk build --lib --target aarch64-linux-android"
+android-apk-release = "apk build --release --lib --target aarch64-linux-android"

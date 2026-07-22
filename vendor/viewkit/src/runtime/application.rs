@@ -278,7 +278,15 @@ where
         Ok(())
     }
 
+    #[cfg(target_os = "android")]
+    {
+        let _ = runtime;
+        let _ = options;
+        Err(ViewKitError::AndroidAppRequired)
+    }
+
     #[cfg(not(any(
+        target_os = "android",
         target_os = "linux",
         target_os = "windows",
         target_os = "macos",
@@ -292,9 +300,41 @@ where
     }
 }
 
+/// AndroidのActivity上でViewKitアプリケーションを起動します。
+#[cfg(target_os = "android")]
+pub fn run_android<A>(android_app: crate::platform::android::AndroidApp) -> Result<(), ViewKitError>
+where
+    A: App,
+{
+    use crate::platform::android::AndroidBackend;
+
+    let app = A::new();
+    let options = app.window();
+    let runtime = ApplicationRuntime::new(app);
+    let backend = AndroidBackend::new(
+        runtime,
+        WindowConfig {
+            title: options.title().to_owned(),
+            size: options.initial_size(),
+            resizable: options.is_resizable(),
+            fullscreen: options.is_fullscreen(),
+        },
+    );
+
+    backend.run_android(android_app)?;
+    Ok(())
+}
+
 /// ViewKitアプリケーションの起動中に発生するエラーです。
 #[derive(Debug, thiserror::Error)]
 pub enum ViewKitError {
+    #[cfg(target_os = "android")]
+    #[error(transparent)]
+    Android(#[from] crate::platform::android::AndroidBackendError),
+
+    #[cfg(target_os = "android")]
+    #[error("Androidではrun_androidへAndroidAppを渡す必要があります")]
+    AndroidAppRequired,
     #[cfg(target_os = "linux")]
     #[error(transparent)]
     Linux(#[from] crate::platform::linux::LinuxBackendError),

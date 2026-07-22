@@ -20,4 +20,6 @@ pub mod theme;
 pub mod typography;
 pub mod view;
 
+#[cfg(target_os = "android")]
+pub use runtime::run_android;
 pub use runtime::{ViewKitError, run};

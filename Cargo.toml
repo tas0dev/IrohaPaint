@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[lib]
+name = "irohapaint"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
 [dependencies]
 resvg = { version = "0.47.0", default-features = false, features = ["raster-images"] }
 tiny-skia = "0.12.0"
@@ -11,3 +16,16 @@ viewkit = { path = "vendor/viewkit" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Controls_Dialogs", "Win32_UI_WindowsAndMessaging"] }
+
+[package.metadata.android]
+package = "dev.irohapaint.app"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.application]
+label = "IrohaPaint"
+theme = "@android:style/Theme.Material.Light.NoActionBar.Fullscreen"
+
+# Android's input watchdog also applies to development APKs. Keep application
+# code debuggable while optimizing the software renderer and its dependencies.
+[profile.dev.package."*"]
+opt-level = 2

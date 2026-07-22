@@ -2,9 +2,17 @@ mod event;
 mod font;
 mod window;
 
-#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+#[cfg(any(
+    target_os = "android",
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "macos"
+))]
 #[path = "linux/mod.rs"]
 mod desktop;
+
+#[cfg(target_os = "android")]
+pub mod android;
 
 #[cfg(target_os = "linux")]
 pub mod linux {
