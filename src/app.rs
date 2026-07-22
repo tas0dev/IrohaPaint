@@ -33,6 +33,7 @@ pub struct IrohaPaint {
     layer_opacity: State<f32>,
     inspected_layer: State<Option<usize>>,
     layer_scroll: ScrollState,
+    property_scroll: ScrollState,
     stroke_color: State<Color>,
     fill_color: State<Color>,
     color_target: State<usize>,
@@ -75,6 +76,7 @@ impl App for IrohaPaint {
             layer_opacity: State::new(1.0),
             inspected_layer: State::new(None),
             layer_scroll: ScrollState::new(),
+            property_scroll: ScrollState::new(),
             stroke_color: State::new(Color::BLACK),
             fill_color: State::new(Color::TRANSPARENT),
             color_target: State::new(0),
@@ -106,25 +108,67 @@ impl App for IrohaPaint {
     }
 
     fn body(&self, _context: &ViewContext) -> Box<dyn View + 'static> {
+        let inspector_bindings = || inspector::InspectorBindings {
+            stroke_color: self.stroke_color.clone(),
+            fill_color: self.fill_color.clone(),
+            color_target: self.color_target.clone(),
+            brush_width: self.brush_width.clone(),
+            blob_width: self.blob_width.clone(),
+            paint_size: self.paint_size.clone(),
+            paint_opacity: self.paint_opacity.clone(),
+            paint_softness: self.paint_softness.clone(),
+            eraser_mode: self.eraser_mode.clone(),
+            smoothing: self.smoothing.clone(),
+            inspected_object: self.inspected_object.clone(),
+            layer_name: self.layer_name.clone(),
+            layer_name_settings: self.layer_name_settings.clone(),
+            folder_name: self.folder_name.clone(),
+            editing_folder: self.editing_folder.clone(),
+            folder_name_settings: self.folder_name_settings.clone(),
+            layer_opacity: self.layer_opacity.clone(),
+            inspected_layer: self.inspected_layer.clone(),
+            project_path: self.project_path.clone(),
+            layer_scroll: self.layer_scroll.clone(),
+            property_scroll: self.property_scroll.clone(),
+        };
         let content = VStack::new()
             .alignment(StackAlignment::Stretch)
             .gap(StackGap::None)
-            .child(menu_bar::view(
-                self.document.clone(),
-                self.canvas.clone(),
-                self.export_status.clone(),
-                self.file_menu.clone(),
-                self.edit_menu.clone(),
-            ))
+            .child(
+                menu_bar::view(
+                    self.document.clone(),
+                    self.canvas.clone(),
+                    self.export_status.clone(),
+                    self.file_menu.clone(),
+                    self.edit_menu.clone(),
+                )
+                .into_stack_child()
+                .flex_shrink(0.0),
+            )
             .child(Divider::new())
             .child(
                 HStack::new()
                     .alignment(StackAlignment::Stretch)
                     .gap(StackGap::None)
-                    .child(tool_bar::view(
-                        self.active_tool.clone(),
-                        self.pen_menu.clone(),
-                    ))
+                    .child(
+                        tool_bar::view(self.active_tool.clone(), self.pen_menu.clone())
+                            .into_stack_child()
+                            .flex_shrink(0.0),
+                    )
+                    .child(Divider::new())
+                    .child(
+                        inspector::view(
+                            self.document.clone(),
+                            self.canvas.clone(),
+                            self.brushes.clone(),
+                            self.active_tool.clone(),
+                            inspector_bindings(),
+                            inspector::InspectorPalette::ToolProperty,
+                        )
+                        .layout()
+                        .width(248.0)
+                        .flex_shrink(0.0),
+                    )
                     .child(Divider::new())
                     .child(
                         EditorCanvas::new(
@@ -142,38 +186,25 @@ impl App for IrohaPaint {
                             },
                         )
                         .layout()
+                        .width(0.0)
                         .flex_grow(1.0),
                     )
                     .child(Divider::new())
-                    .child(inspector::view(
-                        self.document.clone(),
-                        self.canvas.clone(),
-                        self.brushes.clone(),
-                        self.active_tool.clone(),
-                        inspector::InspectorBindings {
-                            stroke_color: self.stroke_color.clone(),
-                            fill_color: self.fill_color.clone(),
-                            color_target: self.color_target.clone(),
-                            brush_width: self.brush_width.clone(),
-                            blob_width: self.blob_width.clone(),
-                            paint_size: self.paint_size.clone(),
-                            paint_opacity: self.paint_opacity.clone(),
-                            paint_softness: self.paint_softness.clone(),
-                            eraser_mode: self.eraser_mode.clone(),
-                            smoothing: self.smoothing.clone(),
-                            inspected_object: self.inspected_object.clone(),
-                            layer_name: self.layer_name.clone(),
-                            layer_name_settings: self.layer_name_settings.clone(),
-                            folder_name: self.folder_name.clone(),
-                            editing_folder: self.editing_folder.clone(),
-                            folder_name_settings: self.folder_name_settings.clone(),
-                            layer_opacity: self.layer_opacity.clone(),
-                            inspected_layer: self.inspected_layer.clone(),
-                            project_path: self.project_path.clone(),
-                            layer_scroll: self.layer_scroll.clone(),
-                        },
-                    ))
+                    .child(
+                        inspector::view(
+                            self.document.clone(),
+                            self.canvas.clone(),
+                            self.brushes.clone(),
+                            self.active_tool.clone(),
+                            inspector_bindings(),
+                            inspector::InspectorPalette::Layers,
+                        )
+                        .layout()
+                        .width(248.0)
+                        .flex_shrink(0.0),
+                    )
                     .layout()
+                    .height(0.0)
                     .flex_grow(1.0),
             );
         let menu = menu_bar::file_menu(

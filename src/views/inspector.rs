@@ -7,6 +7,7 @@ use crate::canvas::CanvasController;
 use crate::document::{Document, DocumentColor, FolderId, NodeKind, ObjectId};
 use crate::editor::EditorTool;
 
+#[derive(Clone)]
 pub struct InspectorBindings {
     pub stroke_color: State<Color>,
     pub fill_color: State<Color>,
@@ -28,6 +29,13 @@ pub struct InspectorBindings {
     pub inspected_layer: State<Option<usize>>,
     pub project_path: State<Option<PathBuf>>,
     pub layer_scroll: ScrollState,
+    pub property_scroll: ScrollState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InspectorPalette {
+    ToolProperty,
+    Layers,
 }
 
 pub fn view(
@@ -36,7 +44,8 @@ pub fn view(
     brushes: State<BrushLibrary>,
     active_tool: State<EditorTool>,
     bindings: InspectorBindings,
-) -> impl View + 'static {
+    palette: InspectorPalette,
+) -> Box<dyn View + 'static> {
     let current_document = document.get();
     let tool = active_tool.get();
     let painting_blob = tool == EditorTool::BlobBrush;
@@ -366,23 +375,6 @@ pub fn view(
         .alignment(StackAlignment::Stretch)
         .gap(StackGap::Medium)
         .children(hierarchy_rows);
-    let layer_panel = VStack::new()
-        .alignment(StackAlignment::Stretch)
-        .gap(StackGap::Medium)
-        .child(
-            Text::new("Layers")
-                .weight(700)
-                .into_stack_child()
-                .flex_shrink(0.0),
-        )
-        .child(Divider::new())
-        .child(
-            Scroll::new(bindings.layer_scroll.clone())
-                .intrinsic_cross_axis(true)
-                .content(layer_list)
-                .layout()
-                .flex_grow(1.0),
-        );
     let editing_fill = !painting_blob
         && !painting_raster
         && !filling
@@ -394,79 +386,75 @@ pub fn view(
         bindings.stroke_color.get()
     };
 
-    let mut content = VStack::new()
-        .alignment(StackAlignment::Stretch)
-        .gap(StackGap::Medium)
+    let layer_actions = HStack::new()
+        .gap(StackGap::ExtraSmall)
+        .child(icon_button::view("plus").on_click({
+            let document = document.clone();
+            let canvas = canvas.clone();
+            move || {
+                document.update(Document::add_layer);
+                clear_canvas_selection(&canvas);
+            }
+        }))
+        .child(icon_button::view("layers").on_click({
+            let document = document.clone();
+            let canvas = canvas.clone();
+            move || {
+                if document.update(Document::create_folder_from_selected) {
+                    clear_canvas_selection(&canvas);
+                }
+            }
+        }))
         .child(
-            HStack::new()
-                .gap(StackGap::ExtraSmall)
-                .child(icon_button::view("plus").on_click({
+            icon_button::view("trash-2")
+                .enabled(current_document.layers().len() > 1)
+                .on_click({
                     let document = document.clone();
                     let canvas = canvas.clone();
                     move || {
-                        document.update(Document::add_layer);
-                        clear_canvas_selection(&canvas);
+                        if document.update(Document::delete_selected_layer) {
+                            let mut canvas = canvas.get_mut();
+                            canvas.active_pen_path = None;
+                            canvas.selected_objects.clear();
+                            canvas.selected_nodes.clear();
+                            canvas.hovered_node = None;
+                            canvas.hovered_segment = None;
+                        }
                     }
-                }))
-                .child(icon_button::view("layers").on_click({
+                }),
+        )
+        .child(
+            icon_button::view("arrow-up")
+                .enabled(
+                    selected_layer.is_some_and(|index| index + 1 < current_document.layers().len()),
+                )
+                .on_click({
                     let document = document.clone();
                     let canvas = canvas.clone();
                     move || {
-                        if document.update(Document::create_folder_from_selected) {
+                        if document.update(Document::move_selected_layer_up) {
                             clear_canvas_selection(&canvas);
                         }
                     }
-                }))
-                .child(
-                    icon_button::view("trash-2")
-                        .enabled(current_document.layers().len() > 1)
-                        .on_click({
-                            let document = document.clone();
-                            let canvas = canvas.clone();
-                            move || {
-                                if document.update(Document::delete_selected_layer) {
-                                    let mut canvas = canvas.get_mut();
-                                    canvas.active_pen_path = None;
-                                    canvas.selected_objects.clear();
-                                    canvas.selected_nodes.clear();
-                                    canvas.hovered_node = None;
-                                    canvas.hovered_segment = None;
-                                }
-                            }
-                        }),
-                )
-                .child(
-                    icon_button::view("arrow-up")
-                        .enabled(
-                            selected_layer
-                                .is_some_and(|index| index + 1 < current_document.layers().len()),
-                        )
-                        .on_click({
-                            let document = document.clone();
-                            let canvas = canvas.clone();
-                            move || {
-                                if document.update(Document::move_selected_layer_up) {
-                                    clear_canvas_selection(&canvas);
-                                }
-                            }
-                        }),
-                )
-                .child(
-                    icon_button::view("arrow-down")
-                        .enabled(selected_layer.is_some_and(|index| index > 0))
-                        .on_click({
-                            let document = document.clone();
-                            let canvas = canvas.clone();
-                            move || {
-                                if document.update(Document::move_selected_layer_down) {
-                                    clear_canvas_selection(&canvas);
-                                }
-                            }
-                        }),
-                ),
+                }),
         )
-        .child(Text::new("Layer Properties").weight(700))
-        .child(Divider::new())
+        .child(
+            icon_button::view("arrow-down")
+                .enabled(selected_layer.is_some_and(|index| index > 0))
+                .on_click({
+                    let document = document.clone();
+                    let canvas = canvas.clone();
+                    move || {
+                        if document.update(Document::move_selected_layer_down) {
+                            clear_canvas_selection(&canvas);
+                        }
+                    }
+                }),
+        );
+
+    let layer_properties = VStack::new()
+        .alignment(StackAlignment::Stretch)
+        .gap(StackGap::Medium)
         .child(Text::new(format!(
             "Opacity — {:.0}%",
             bindings.layer_opacity.get() * 100.0
@@ -534,7 +522,25 @@ pub fn view(
                             }
                         }),
                 ),
+        );
+
+    let layer_panel = VStack::new()
+        .alignment(StackAlignment::Stretch)
+        .gap(StackGap::Medium)
+        .child(layer_actions.into_stack_child().flex_shrink(0.0))
+        .child(
+            Scroll::new(bindings.layer_scroll.clone())
+                .intrinsic_cross_axis(true)
+                .content(layer_list)
+                .layout()
+                .flex_grow(1.0),
         )
+        .child(Divider::new())
+        .child(layer_properties.into_stack_child().flex_shrink(0.0));
+
+    let mut content = VStack::new()
+        .alignment(StackAlignment::Stretch)
+        .gap(StackGap::Medium)
         .child(
             Text::new(if erasing {
                 "Eraser"
@@ -775,15 +781,48 @@ pub fn view(
     if current_document.is_modified() {
         project_name.push('*');
     }
-    Padding::all(12.0).content(
-        VStack::new()
-            .alignment(StackAlignment::Stretch)
-            .gap(StackGap::Medium)
-            .child(layer_panel.layout().flex_grow(1.0))
-            .child(content.layout().flex_shrink(0.0))
-            .child(Divider::new())
-            .child(Text::new(project_name)),
-    )
+    let tool_panel = VStack::new()
+        .alignment(StackAlignment::Stretch)
+        .gap(StackGap::Medium)
+        .child(
+            Scroll::new(bindings.property_scroll.clone())
+                .intrinsic_cross_axis(true)
+                .content(content)
+                .layout()
+                .flex_grow(1.0),
+        );
+    match palette {
+        InspectorPalette::ToolProperty => Box::new(
+            Padding::all(12.0).content(
+                VStack::new()
+                    .alignment(StackAlignment::Stretch)
+                    .gap(StackGap::Medium)
+                    .child(palette_tab("Tool Property"))
+                    .child(Divider::new())
+                    .child(tool_panel.layout().flex_grow(1.0)),
+            ),
+        ),
+        InspectorPalette::Layers => Box::new(
+            Padding::all(12.0).content(
+                VStack::new()
+                    .alignment(StackAlignment::Stretch)
+                    .gap(StackGap::Medium)
+                    .child(palette_tab("Layers"))
+                    .child(Divider::new())
+                    .child(layer_panel.layout().flex_grow(1.0))
+                    .child(Divider::new())
+                    .child(Text::new(project_name).into_stack_child().flex_shrink(0.0)),
+            ),
+        ),
+    }
+}
+
+fn palette_tab(label: &'static str) -> impl View + 'static {
+    HStack::new()
+        .alignment(StackAlignment::Center)
+        .gap(StackGap::None)
+        .child(Button::new(label).style(ButtonStyle::Standard))
+        .child(Spacer::new())
 }
 
 fn color_label(color: Color) -> String {
