@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::draw_command::DrawCommand;
 use crate::event::{EventContext, EventResult, ViewEvent};
@@ -37,18 +38,23 @@ pub enum ScrollBarVisibility {
     #[default]
     Automatic,
 
+    WhileScrolling,
+
     Always,
 }
 
 impl ScrollBarVisibility {
-    fn should_show(self, overflowing: bool) -> bool {
+    fn should_show(self, overflowing: bool, scrolling: bool) -> bool {
         match self {
             Self::Hidden => false,
             Self::Automatic => overflowing,
+            Self::WhileScrolling => overflowing && scrolling,
             Self::Always => true,
         }
     }
 }
+
+const SCROLLBAR_VISIBLE_DURATION: Duration = Duration::from_millis(850);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct ScrollStateInner {
@@ -59,6 +65,7 @@ struct ScrollStateInner {
     cached_axis: ScrollAxis,
     cached_viewport_size: Size,
     cached_content_size: Size,
+    last_scroll_at: Option<Instant>,
 }
 
 #[derive(Clone, Default)]
@@ -106,6 +113,17 @@ impl ScrollState {
 
     pub fn reset(&self) {
         self.set_offset(0.0, 0.0);
+    }
+
+    fn mark_scrolled(&self, now: Instant) {
+        self.inner.borrow_mut().last_scroll_at = Some(now);
+    }
+
+    fn scrollbar_deadline(&self) -> Option<Instant> {
+        self.inner
+            .borrow()
+            .last_scroll_at
+            .map(|last_scroll_at| last_scroll_at + SCROLLBAR_VISIBLE_DURATION)
     }
 
     fn remember_layout(&self, axis: ScrollAxis, viewport_size: Size, content_size: Size) {
@@ -348,11 +366,26 @@ impl Scroll {
 
         let vertical_overflow = content_size.height > bounds.size.height;
 
-        let show_horizontal = self.axis.allows_horizontal()
-            && self.scrollbar_visibility.should_show(horizontal_overflow);
+        let now = Instant::now();
+        let scrollbar_deadline = self.state.scrollbar_deadline();
+        let scrolling = scrollbar_deadline.is_some_and(|deadline| now < deadline);
 
-        let show_vertical =
-            self.axis.allows_vertical() && self.scrollbar_visibility.should_show(vertical_overflow);
+        if self.scrollbar_visibility == ScrollBarVisibility::WhileScrolling
+            && let Some(deadline) = scrollbar_deadline
+            && scrolling
+        {
+            context.request_redraw_at(deadline);
+        }
+
+        let show_horizontal = self.axis.allows_horizontal()
+            && self
+                .scrollbar_visibility
+                .should_show(horizontal_overflow, scrolling);
+
+        let show_vertical = self.axis.allows_vertical()
+            && self
+                .scrollbar_visibility
+                .should_show(vertical_overflow, scrolling);
 
         if !show_horizontal && !show_vertical {
             return;
@@ -540,6 +573,8 @@ impl View for Scroll {
         if current_offset == previous_offset {
             return EventResult::Ignored;
         }
+
+        self.state.mark_scrolled(Instant::now());
 
         /*
          * スクロールするとviewport内のすべての内容が

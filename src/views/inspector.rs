@@ -119,6 +119,7 @@ pub fn view(
         .map(|layer| layer.folder())
         .collect::<Vec<_>>();
     const LAYER_TARGET_BASE: u64 = 1 << 32;
+    const LAYER_ROW_HEIGHT: f32 = 56.0;
     let make_layer_row = |index: usize, layer: &crate::document::Layer| {
         let layer_name = layer.name().to_owned();
         let visible = layer.is_visible();
@@ -178,7 +179,8 @@ pub fn view(
                                 (index, layer_folders[index])
                             }
                         } else {
-                            let distance = (delta_y.abs() / 48.0).round().max(1.0) as isize;
+                            let distance =
+                                (delta_y.abs() / LAYER_ROW_HEIGHT).round().max(1.0) as isize;
                             let target = if delta_y > 0.0 {
                                 index as isize - distance
                             } else {
@@ -371,10 +373,15 @@ pub fn view(
     if let Some(row) = top_level_row.take() {
         hierarchy_rows.push(row);
     }
+    let layer_content_height = hierarchy_rows.len() as f32 * LAYER_ROW_HEIGHT;
     let layer_list = VStack::new()
         .alignment(StackAlignment::Stretch)
-        .gap(StackGap::Medium)
-        .children(hierarchy_rows);
+        .gap(StackGap::None)
+        .children(hierarchy_rows.into_iter().map(|row| {
+            row.into_stack_child()
+                .height(LAYER_ROW_HEIGHT)
+                .flex_shrink(0.0)
+        }));
     let editing_fill = !painting_blob
         && !painting_raster
         && !filling
@@ -531,8 +538,10 @@ pub fn view(
         .child(
             Scroll::new(bindings.layer_scroll.clone())
                 .intrinsic_cross_axis(true)
-                .content(layer_list)
+                .scrollbar(ScrollBarVisibility::WhileScrolling)
+                .content(layer_list.layout().height(layer_content_height))
                 .layout()
+                .height(0.0)
                 .flex_grow(1.0),
         )
         .child(Divider::new())
@@ -787,8 +796,10 @@ pub fn view(
         .child(
             Scroll::new(bindings.property_scroll.clone())
                 .intrinsic_cross_axis(true)
+                .scrollbar(ScrollBarVisibility::WhileScrolling)
                 .content(content)
                 .layout()
+                .height(0.0)
                 .flex_grow(1.0),
         );
     match palette {

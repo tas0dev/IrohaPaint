@@ -26,8 +26,10 @@ impl Constraints {
     pub fn constrain(self, size: Size) -> Size {
         let minimum_width = sanitize_constraint_length(self.minimum.width);
         let minimum_height = sanitize_constraint_length(self.minimum.height);
-        let maximum_width = sanitize_constraint_length(self.maximum.width).max(minimum_width);
-        let maximum_height = sanitize_constraint_length(self.maximum.height).max(minimum_height);
+        let maximum_width =
+            sanitize_maximum_constraint_length(self.maximum.width).max(minimum_width);
+        let maximum_height =
+            sanitize_maximum_constraint_length(self.maximum.height).max(minimum_height);
 
         Size::new(
             sanitize_constraint_length(size.width).clamp(minimum_width, maximum_width),
@@ -41,6 +43,14 @@ fn sanitize_constraint_length(value: f32) -> f32 {
         value.max(0.0)
     } else {
         0.0
+    }
+}
+
+fn sanitize_maximum_constraint_length(value: f32) -> f32 {
+    if value.is_nan() || value.is_sign_negative() {
+        0.0
+    } else {
+        value
     }
 }
 
