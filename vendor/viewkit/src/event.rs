@@ -2,7 +2,7 @@
 
 use crate::geometry::{Point, Rect};
 use crate::platform::{
-    ButtonState, CursorIcon, KeyCode, KeyModifiers, PlatformEvent, PointerButton,
+    ButtonState, CursorIcon, KeyCode, KeyModifiers, PlatformEvent, PointerButton, TouchPhase,
 };
 use crate::theme::Theme;
 use crate::typography::{TextMeasurer, Typography};
@@ -29,6 +29,13 @@ pub enum ViewEvent {
     },
 
     PointerLeft,
+
+    Touch {
+        id: u64,
+        phase: TouchPhase,
+        position: Point,
+        pressure: Option<f32>,
+    },
 
     Scroll {
         position: Point,
@@ -80,6 +87,7 @@ impl ViewEvent {
             | Self::PointerPressed { position, .. }
             | Self::PointerReleased { position, .. }
             | Self::Scroll { position, .. }
+            | Self::Touch { position, .. }
             | Self::PointerFocusRequested { position } => Some(*position),
 
             Self::PointerLeft
@@ -117,6 +125,10 @@ impl ViewEvent {
                 | Self::PointerFocusRequested { .. }
                 | Self::PointerLeft
                 | Self::PointerPressureChanged { .. }
+                | Self::Touch {
+                    phase: TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled,
+                    ..
+                }
                 | Self::TextInput { .. }
                 | Self::KeyInput { .. }
                 | Self::ModifiersChanged { .. }
@@ -326,6 +338,19 @@ impl EventDispatcher {
 
                 Some(ViewEvent::PointerLeft)
             }
+
+            PlatformEvent::Touch {
+                id,
+                phase,
+                x,
+                y,
+                pressure,
+            } => Some(ViewEvent::Touch {
+                id: *id,
+                phase: *phase,
+                position: Point::new(*x, *y),
+                pressure: pressure.map(|pressure| pressure.clamp(0.0, 1.0)),
+            }),
 
             PlatformEvent::Scroll { delta_x, delta_y } => {
                 let position = self.pointer_position?;

@@ -48,30 +48,34 @@ pub fn paint_editor_canvas(
         .push(DrawCommand::PushClip { rect: bounds });
 
     let artboard = if let CanvasSize::Custom { width, height } = document.properties().canvas_size {
-        let artboard = transform.document_rect_to_canvas(
-            DocumentRect {
-                x: 0.0,
-                y: 0.0,
-                width,
-                height,
-            },
-            bounds,
-        );
+        let document_bounds = DocumentRect {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        };
+        let artboard = transform.document_rect_to_canvas(document_bounds, bounds);
         let background = document.properties().background;
-        context.display_list.push(DrawCommand::FillRect {
-            rect: artboard,
-            color: if background.alpha == 0 {
-                context.theme.colors.elevated_surface
-            } else {
-                view_color(background)
-            },
-        });
-        Some(artboard)
+        let background = if background.alpha == 0 {
+            context.theme.colors.elevated_surface
+        } else {
+            view_color(background)
+        };
+        let corners = transform.document_rect_corners(document_bounds, bounds);
+        if transform.rotation().abs() < 0.0001 {
+            context.display_list.push(DrawCommand::FillRect {
+                rect: artboard,
+                color: background,
+            });
+        } else {
+            paint_artboard(corners, artboard, background, context);
+        }
+        Some((artboard, corners))
     } else {
         None
     };
 
-    if let Some(artboard) = artboard {
+    if let Some((artboard, _)) = artboard {
         context
             .display_list
             .push(DrawCommand::PushClip { rect: artboard });
@@ -205,12 +209,16 @@ pub fn paint_editor_canvas(
         context.display_list.push(DrawCommand::PopClip);
     }
 
-    if let Some(artboard) = artboard {
-        context.display_list.push(DrawCommand::StrokeRect {
-            rect: artboard,
-            color: context.theme.colors.border,
-            width: 1.0,
-        });
+    if let Some((artboard, corners)) = artboard {
+        if transform.rotation().abs() < 0.0001 {
+            context.display_list.push(DrawCommand::StrokeRect {
+                rect: artboard,
+                color: context.theme.colors.border,
+                width: 1.0,
+            });
+        } else {
+            paint_artboard_outline(corners, artboard, context.theme.colors.border, context);
+        }
     }
 
     if let Some(selected_id) = document.selected_object()
@@ -274,6 +282,84 @@ pub fn paint_editor_canvas(
     }
 
     context.display_list.push(DrawCommand::PopClip);
+}
+
+fn paint_artboard(
+    corners: [Point; 4],
+    bounds: Rect,
+    color: viewkit::theme::Color,
+    context: &mut PaintContext<'_>,
+) {
+    let points = corners
+        .iter()
+        .map(|point| {
+            format!(
+                "{},{}",
+                point.x - bounds.origin.x,
+                point.y - bounds.origin.y
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><polygon points="{points}" fill="#{red:02X}{green:02X}{blue:02X}" fill-opacity="{opacity}"/></svg>"##,
+        width = bounds.size.width.max(1.0),
+        height = bounds.size.height.max(1.0),
+        red = color.red,
+        green = color.green,
+        blue = color.blue,
+        opacity = color.alpha as f32 / 255.0,
+    );
+    let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
+        return;
+    };
+    context.display_list.push(DrawCommand::DrawSvg {
+        command: SvgCommand {
+            svg,
+            bounds,
+            opacity: 1.0,
+            tint: None,
+        },
+    });
+}
+
+fn paint_artboard_outline(
+    corners: [Point; 4],
+    bounds: Rect,
+    color: viewkit::theme::Color,
+    context: &mut PaintContext<'_>,
+) {
+    let points = corners
+        .iter()
+        .map(|point| {
+            format!(
+                "{},{}",
+                point.x - bounds.origin.x,
+                point.y - bounds.origin.y
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><polygon points="{points}" fill="none" stroke="#{red:02X}{green:02X}{blue:02X}" stroke-opacity="{opacity}" stroke-width="1"/></svg>"##,
+        width = bounds.size.width.max(1.0),
+        height = bounds.size.height.max(1.0),
+        red = color.red,
+        green = color.green,
+        blue = color.blue,
+        opacity = color.alpha as f32 / 255.0,
+    );
+    let Ok(svg) = SvgData::decode(svg.as_bytes()) else {
+        return;
+    };
+    context.display_list.push(DrawCommand::DrawSvg {
+        command: SvgCommand {
+            svg,
+            bounds,
+            opacity: 1.0,
+            tint: None,
+        },
+    });
 }
 
 fn paint_clipped_layer(

@@ -383,23 +383,19 @@ where
                     .map(|window| window.scale_factor())
                     .unwrap_or(1.0);
                 let (x, y) = physical_position_to_logical(touch.location, scale_factor);
-                let pressure = touch.force.map(normalized_force).unwrap_or(1.0);
-                self.emit(PlatformEvent::PointerPressureChanged { pressure });
-                self.emit(PlatformEvent::PointerMoved { x, y });
-                match touch.phase {
-                    TouchPhase::Started => self.emit(PlatformEvent::PointerButton {
-                        button: PointerButton::Primary,
-                        state: ButtonState::Pressed,
-                    }),
-                    TouchPhase::Ended | TouchPhase::Cancelled => {
-                        self.emit(PlatformEvent::PointerButton {
-                            button: PointerButton::Primary,
-                            state: ButtonState::Released,
-                        });
-                        self.emit(PlatformEvent::PointerPressureChanged { pressure: 1.0 });
-                    }
-                    TouchPhase::Moved => {}
-                }
+                let pressure = touch.force.map(normalized_force);
+                self.emit(PlatformEvent::Touch {
+                    id: touch.id,
+                    phase: match touch.phase {
+                        TouchPhase::Started => crate::platform::TouchPhase::Started,
+                        TouchPhase::Moved => crate::platform::TouchPhase::Moved,
+                        TouchPhase::Ended => crate::platform::TouchPhase::Ended,
+                        TouchPhase::Cancelled => crate::platform::TouchPhase::Cancelled,
+                    },
+                    x,
+                    y,
+                    pressure,
+                });
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -439,6 +435,9 @@ where
                     }
                     Key::Character(character) if character.as_str().eq_ignore_ascii_case("d") => {
                         Some(KeyCode::D)
+                    }
+                    Key::Character(character) if character.as_str().eq_ignore_ascii_case("r") => {
+                        Some(KeyCode::R)
                     }
                     _ => None,
                 };

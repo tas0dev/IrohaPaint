@@ -125,18 +125,42 @@ impl View for NavigatorCanvas {
         );
 
         if !state.viewport_bounds.is_empty() {
-            let first = state
-                .transform
-                .canvas_to_document(state.viewport_bounds.origin, state.viewport_bounds);
-            let second = state.transform.canvas_to_document(
+            let viewport = state.viewport_bounds;
+            let corners = [
+                viewport.origin,
+                Point::new(viewport.origin.x + viewport.size.width, viewport.origin.y),
                 Point::new(
-                    state.viewport_bounds.origin.x + state.viewport_bounds.size.width,
-                    state.viewport_bounds.origin.y + state.viewport_bounds.size.height,
+                    viewport.origin.x + viewport.size.width,
+                    viewport.origin.y + viewport.size.height,
                 ),
-                state.viewport_bounds,
+                Point::new(viewport.origin.x, viewport.origin.y + viewport.size.height),
+            ]
+            .map(|point| state.transform.canvas_to_document(point, viewport));
+            let left = corners
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::INFINITY, f32::min);
+            let top = corners
+                .iter()
+                .map(|point| point.y)
+                .fold(f32::INFINITY, f32::min);
+            let right = corners
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let bottom = corners
+                .iter()
+                .map(|point| point.y)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let visible = navigator_transform.document_rect_to_canvas(
+                DocumentRect {
+                    x: left,
+                    y: top,
+                    width: right - left,
+                    height: bottom - top,
+                },
+                thumbnail,
             );
-            let visible = navigator_transform
-                .document_rect_to_canvas(DocumentRect::from_points(first, second), thumbnail);
             context.display_list.push(DrawCommand::FillRect {
                 rect: visible,
                 color: context.theme.colors.accent_soft,
@@ -164,18 +188,22 @@ impl View for NavigatorCanvas {
             ),
             color: context.theme.colors.accent,
         });
-        Text::new(format!("{:.0}%", state.transform.zoom() * 100.0))
-            .font_size(11.0)
-            .color(context.theme.colors.text_secondary)
-            .paint(
-                Rect::new(
-                    bounds.origin.x,
-                    thumbnail.origin.y + thumbnail.size.height,
-                    bounds.size.width,
-                    16.0,
-                ),
-                context,
-            );
+        Text::new(format!(
+            "{:.0}% · {:.0}°",
+            state.transform.zoom() * 100.0,
+            state.transform.rotation().to_degrees()
+        ))
+        .font_size(11.0)
+        .color(context.theme.colors.text_secondary)
+        .paint(
+            Rect::new(
+                bounds.origin.x,
+                thumbnail.origin.y + thumbnail.size.height,
+                bounds.size.width,
+                16.0,
+            ),
+            context,
+        );
     }
 
     fn handle_event(

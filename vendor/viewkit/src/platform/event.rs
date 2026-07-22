@@ -16,6 +16,14 @@ pub enum ButtonState {
     Released,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KeyModifiers {
     pub shift: bool,
@@ -32,6 +40,7 @@ pub enum KeyCode {
     C,
     V,
     D,
+    R,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +70,13 @@ pub enum PlatformEvent {
         state: ButtonState,
     },
     PointerLeft,
+    Touch {
+        id: u64,
+        phase: TouchPhase,
+        x: f32,
+        y: f32,
+        pressure: Option<f32>,
+    },
     TextInput {
         text: String,
     },

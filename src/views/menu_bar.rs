@@ -97,11 +97,36 @@ pub fn view_menu(
             } else {
                 "Flip Canvas Horizontally"
             })
-            .on_select(move || {
-                canvas.toggle_view_flip();
-                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            .on_select({
+                let canvas = canvas.clone();
+                let view_revision = view_revision.clone();
+                move || {
+                    canvas.toggle_view_flip();
+                    view_revision.update(|revision| *revision = revision.wrapping_add(1));
+                }
             }),
         )
+        .separator()
+        .item(MenuItem::new("Rotate Canvas Left").on_select({
+            let canvas = canvas.clone();
+            let view_revision = view_revision.clone();
+            move || {
+                canvas.rotate_view(-15.0);
+                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            }
+        }))
+        .item(MenuItem::new("Rotate Canvas Right").on_select({
+            let canvas = canvas.clone();
+            let view_revision = view_revision.clone();
+            move || {
+                canvas.rotate_view(15.0);
+                view_revision.update(|revision| *revision = revision.wrapping_add(1));
+            }
+        }))
+        .item(MenuItem::new("Reset Canvas Rotation").on_select(move || {
+            canvas.reset_view_rotation();
+            view_revision.update(|revision| *revision = revision.wrapping_add(1));
+        }))
 }
 
 pub fn edit_menu(

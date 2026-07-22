@@ -17,6 +17,22 @@ pub(crate) struct ReferenceImage {
     pub opacity: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TouchPoint {
+    pub id: u64,
+    pub position: Point,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TouchGesture {
+    pub start_transform: CanvasTransform,
+    pub anchor: DocumentPoint,
+    pub start_centroid: Point,
+    pub start_distance: f32,
+    pub start_angle: f32,
+    pub moved: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct CanvasController {
     state: Rc<RefCell<CanvasState>>,
@@ -36,9 +52,13 @@ pub(crate) struct CanvasState {
     pub hovered_segment: Option<(ObjectId, SegmentHit)>,
     pub modifiers: KeyModifiers,
     pub space_pressed: bool,
+    pub rotate_pressed: bool,
+    pub view_rotation_drag: Option<(f32, f32)>,
     pub paint_dirty: Option<DocumentRect>,
     pub pointer_canvas: Option<Point>,
     pub pointer_pressure: Option<f32>,
+    pub touches: Vec<TouchPoint>,
+    pub touch_gesture: Option<TouchGesture>,
     pub reference_image: Option<ReferenceImage>,
 }
 
@@ -112,6 +132,16 @@ impl CanvasController {
 
     pub fn toggle_view_flip(&self) {
         self.state.borrow_mut().transform.toggle_horizontal_flip();
+    }
+
+    pub fn rotate_view(&self, degrees: f32) {
+        let mut state = self.state.borrow_mut();
+        let rotation = state.transform.rotation() + degrees.to_radians();
+        state.transform.set_rotation(rotation);
+    }
+
+    pub fn reset_view_rotation(&self) {
+        self.state.borrow_mut().transform.set_rotation(0.0);
     }
 
     pub(crate) fn center_on_document(&self, point: DocumentPoint) {

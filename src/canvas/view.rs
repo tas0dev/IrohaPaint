@@ -1,5 +1,5 @@
 use viewkit::event::{EventContext, EventResult, ViewEvent};
-use viewkit::platform::{ButtonState, KeyCode, KeyModifiers, PointerButton};
+use viewkit::platform::{ButtonState, KeyCode, KeyModifiers, PointerButton, TouchPhase};
 use viewkit::prelude::{Color, CursorIcon, Point, Rect, Size, State, View};
 use viewkit::view::{Constraints, MeasureContext, PaintContext};
 
@@ -20,7 +20,7 @@ use super::interaction::{
 use super::paint::{NodePresentation, paint_editor_canvas};
 use super::raster_stroke::interpolate_dabs;
 use super::region_fill;
-use super::state::CanvasController;
+use super::state::{CanvasController, CanvasState, TouchGesture, TouchPoint};
 use super::stroke::{fit_paint_stroke, fit_pencil_stroke};
 
 const HIT_TOLERANCE: f32 = 6.0;
@@ -506,6 +506,21 @@ impl EditorCanvas {
         let modifiers = state.modifiers;
         let pointer_pressure = state.pointer_pressure.unwrap_or(1.0);
 
+        if let Some((start_angle, start_rotation)) = state.view_rotation_drag {
+            let center = Point::new(
+                bounds.origin.x + bounds.size.width * 0.5,
+                bounds.origin.y + bounds.size.height * 0.5,
+            );
+            let current_angle = (position.y - center.y).atan2(position.x - center.x);
+            let mut rotation = start_rotation + angle_delta(current_angle, start_angle);
+            if modifiers.shift {
+                let step = 15.0_f32.to_radians();
+                rotation = (rotation / step).round() * step;
+            }
+            state.transform.set_rotation(rotation);
+            return true;
+        }
+
         if let Interaction::Panning {
             start_canvas,
             start_pan,
@@ -974,6 +989,131 @@ impl EditorCanvas {
         };
     }
 
+    fn handle_touch(
+        &self,
+        id: u64,
+        phase: TouchPhase,
+        position: Point,
+        pressure: Option<f32>,
+        bounds: Rect,
+        context: &mut EventContext<'_>,
+    ) -> EventResult {
+        if let Some(pressure) = pressure {
+            self.controller.get_mut().pointer_pressure = Some(pressure);
+            let result = match phase {
+                TouchPhase::Started if bounds.contains(position) => {
+                    self.handle_primary_press(position, bounds);
+                    EventResult::Consumed
+                }
+                TouchPhase::Moved if self.handle_pointer_move(position, bounds) => {
+                    EventResult::Consumed
+                }
+                TouchPhase::Ended => {
+                    if !matches!(self.controller.get().interaction, Interaction::Idle) {
+                        self.finish_interaction();
+                    }
+                    self.controller.get_mut().pointer_pressure = None;
+                    EventResult::Consumed
+                }
+                TouchPhase::Cancelled => {
+                    let cancel_change = matches!(
+                        self.controller.get().interaction,
+                        Interaction::Painting { .. }
+                            | Interaction::ErasingObjects { started: true, .. }
+                            | Interaction::ErasingPathSections { started: true, .. }
+                    );
+                    self.controller.get_mut().interaction = Interaction::Idle;
+                    self.controller.get_mut().pointer_pressure = None;
+                    if cancel_change {
+                        self.document.update(Document::cancel_in_progress_change);
+                    }
+                    EventResult::Consumed
+                }
+                _ => EventResult::Ignored,
+            };
+            context.request_redraw_in(self.take_redraw_bounds(bounds));
+            return result;
+        }
+
+        let mut state = self.controller.get_mut();
+        if matches!(
+            state.interaction,
+            Interaction::DrawingShape { .. }
+                | Interaction::DrawingPencil { .. }
+                | Interaction::Painting { .. }
+                | Interaction::DrawingBlob { .. }
+                | Interaction::ErasingObjects { .. }
+                | Interaction::ErasingPathSections { .. }
+                | Interaction::PlacingPathNode { .. }
+                | Interaction::EditingPathNode { .. }
+        ) {
+            return EventResult::Ignored;
+        }
+
+        match phase {
+            TouchPhase::Started if bounds.contains(position) => {
+                if let Some(touch) = state.touches.iter_mut().find(|touch| touch.id == id) {
+                    touch.position = position;
+                } else {
+                    state
+                        .touches
+                        .push(super::state::TouchPoint { id, position });
+                }
+                if state.touches.len() == 2 {
+                    state.touch_gesture = touch_gesture(&state, bounds);
+                }
+            }
+            TouchPhase::Moved => {
+                let Some(touch) = state.touches.iter_mut().find(|touch| touch.id == id) else {
+                    return EventResult::Ignored;
+                };
+                touch.position = position;
+                if state.touches.len() >= 2 {
+                    if state.touch_gesture.is_none() {
+                        state.touch_gesture = touch_gesture(&state, bounds);
+                    }
+                    if let (Some(mut gesture), Some((centroid, distance, angle))) =
+                        (state.touch_gesture, touch_metrics(&state.touches))
+                    {
+                        let scale = distance / gesture.start_distance.max(1.0);
+                        let rotation_delta = angle_delta(angle, gesture.start_angle);
+                        gesture.moved |= point_distance_canvas(centroid, gesture.start_centroid)
+                            > 8.0
+                            || (scale - 1.0).abs() > 0.03
+                            || rotation_delta.abs() > 0.04;
+                        let mut transform = gesture.start_transform;
+                        transform.set_zoom(gesture.start_transform.zoom() * scale);
+                        transform.set_rotation(gesture.start_transform.rotation() + rotation_delta);
+                        transform.set_anchor_at(gesture.anchor, centroid, bounds);
+                        state.transform = transform;
+                        state.touch_gesture = Some(gesture);
+                    }
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                let was_multitouch = state.touches.len() >= 2;
+                state.touches.retain(|touch| touch.id != id);
+                let tap_undo = phase == TouchPhase::Ended
+                    && was_multitouch
+                    && state.touch_gesture.is_some_and(|gesture| !gesture.moved);
+                if state.touches.len() < 2 {
+                    state.touch_gesture = None;
+                }
+                drop(state);
+                if tap_undo {
+                    self.document.update(Document::undo);
+                    self.controller.clear_selection();
+                }
+                context.request_redraw();
+                return EventResult::Consumed;
+            }
+            TouchPhase::Started => return EventResult::Ignored,
+        }
+        drop(state);
+        context.request_redraw();
+        EventResult::Consumed
+    }
+
     fn drawing_bounds(&self) -> Option<DocumentRect> {
         match self.document.get().properties().canvas_size {
             CanvasSize::FitArtwork => None,
@@ -1127,9 +1267,30 @@ impl View for EditorCanvas {
         context: &mut EventContext<'_>,
     ) -> EventResult {
         match event {
+            ViewEvent::Touch {
+                id,
+                phase,
+                position,
+                pressure,
+            } => self.handle_touch(*id, *phase, *position, *pressure, bounds, context),
             ViewEvent::PointerPressureChanged { pressure } => {
                 self.controller.get_mut().pointer_pressure = Some(*pressure);
                 EventResult::Ignored
+            }
+            ViewEvent::PointerPressed { position, button }
+                if bounds.contains(*position)
+                    && *button == PointerButton::Primary
+                    && self.controller.get().rotate_pressed =>
+            {
+                let center = Point::new(
+                    bounds.origin.x + bounds.size.width * 0.5,
+                    bounds.origin.y + bounds.size.height * 0.5,
+                );
+                let start_angle = (position.y - center.y).atan2(position.x - center.x);
+                let start_rotation = self.controller.get().transform.rotation();
+                self.controller.get_mut().view_rotation_drag = Some((start_angle, start_rotation));
+                context.request_redraw_in(bounds);
+                EventResult::Consumed
             }
             ViewEvent::PointerPressed { position, button }
                 if bounds.contains(*position)
@@ -1177,6 +1338,14 @@ impl View for EditorCanvas {
                 self.controller.get_mut().pointer_canvas = None;
                 context.request_redraw_in(bounds);
                 EventResult::Ignored
+            }
+            ViewEvent::PointerReleased { button, .. }
+                if *button == PointerButton::Primary
+                    && self.controller.get().view_rotation_drag.is_some() =>
+            {
+                self.controller.get_mut().view_rotation_drag = None;
+                context.request_redraw_in(bounds);
+                EventResult::Consumed
             }
             ViewEvent::PointerReleased { button, .. }
                 if matches!(
@@ -1278,6 +1447,14 @@ impl View for EditorCanvas {
                     }
                     EventResult::Consumed
                 }
+                (KeyCode::R, key_state) => {
+                    let mut state = self.controller.get_mut();
+                    state.rotate_pressed = *key_state == ButtonState::Pressed;
+                    if *key_state == ButtonState::Released {
+                        state.view_rotation_drag = None;
+                    }
+                    EventResult::Consumed
+                }
                 (KeyCode::C, ButtonState::Pressed) if modifiers.shortcut && !*repeat => {
                     self.controller.copy_selection(&self.document.get());
                     EventResult::Consumed
@@ -1368,6 +1545,10 @@ impl View for EditorCanvas {
             ViewEvent::FocusChanged { focused: false } => {
                 let mut state = self.controller.get_mut();
                 state.space_pressed = false;
+                state.rotate_pressed = false;
+                state.view_rotation_drag = None;
+                state.touches.clear();
+                state.touch_gesture = None;
                 state.modifiers = KeyModifiers::default();
                 if matches!(
                     state.interaction,
@@ -1383,6 +1564,40 @@ impl View for EditorCanvas {
             _ => EventResult::Ignored,
         }
     }
+}
+
+fn touch_metrics(touches: &[TouchPoint]) -> Option<(Point, f32, f32)> {
+    let [first, second, ..] = touches else {
+        return None;
+    };
+    let centroid = Point::new(
+        (first.position.x + second.position.x) * 0.5,
+        (first.position.y + second.position.y) * 0.5,
+    );
+    let delta_x = second.position.x - first.position.x;
+    let delta_y = second.position.y - first.position.y;
+    Some((centroid, delta_x.hypot(delta_y), delta_y.atan2(delta_x)))
+}
+
+fn touch_gesture(state: &CanvasState, bounds: Rect) -> Option<TouchGesture> {
+    let (centroid, distance, angle) = touch_metrics(&state.touches)?;
+    Some(TouchGesture {
+        start_transform: state.transform,
+        anchor: state.transform.canvas_to_document(centroid, bounds),
+        start_centroid: centroid,
+        start_distance: distance,
+        start_angle: angle,
+        moved: false,
+    })
+}
+
+fn point_distance_canvas(first: Point, second: Point) -> f32 {
+    (second.x - first.x).hypot(second.y - first.y)
+}
+
+fn angle_delta(current: f32, start: f32) -> f32 {
+    (current - start + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI
 }
 
 fn clamp_point(point: DocumentPoint, bounds: DocumentRect) -> DocumentPoint {

@@ -43,10 +43,22 @@ pub fn view(
                     } else {
                         "Flip"
                     })
-                    .on_click(move || {
-                        canvas.toggle_view_flip();
-                        view_revision.update(|revision| *revision = revision.wrapping_add(1));
+                    .on_click({
+                        let canvas = canvas.clone();
+                        let view_revision = view_revision.clone();
+                        move || {
+                            canvas.toggle_view_flip();
+                            view_revision.update(|revision| *revision = revision.wrapping_add(1));
+                        }
                     }),
-                ),
+                )
+                .child(Button::new("0°").on_click({
+                    let canvas = canvas.clone();
+                    let view_revision = view_revision.clone();
+                    move || {
+                        canvas.reset_view_rotation();
+                        view_revision.update(|revision| *revision = revision.wrapping_add(1));
+                    }
+                })),
         )
 }
